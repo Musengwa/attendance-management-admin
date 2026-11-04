@@ -1,0 +1,18 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>Members <a class="btn" style="float:right;font-size:14px" href="{% url 'member_add' %}">+ Register member</a></h1>
+<div class="card"><table>
+<tr><th>ID</th><th>Name</th><th>Email</th><th>Session</th><th>Registered</th><th>Face</th><th>Status</th><th>Visits</th><th></th></tr>
+{% for m in members %}<tr>
+<td>{{ m.member_id }}</td><td>{{ m.full_name }}</td><td><small>{{ m.email|default:"-" }}</small></td>
+<td>{{ m.session.name|default:"-" }}</td><td><small>{{ m.registered_at|date:"d M Y H:i" }}</small></td>
+<td>{% if m.face_registered %}<span class="tag ok">Scanned</span>{% else %}<span class="tag off">Not scanned</span>{% endif %}
+ <a href="{% url 'member_scan' m.pk %}"><small>{% if m.face_registered %}rescan{% else %}scan{% endif %}</small></a></td>
+<td><span class="tag {% if m.status == 'ACTIVE' %}ok{% else %}bad{% endif %}">{{ m.get_status_display }}</span>{% if m.ban_reason %}<br><small>{{ m.ban_reason }}</small>{% endif %}</td>
+<td>{{ m.visits }}</td>
+<td><div class="row"><a href="{% url 'member_edit' m.pk %}"><small>edit</small></a>
+{% if m.status == 'ACTIVE' %}<form method="post" action="{% url 'member_ban' m.pk %}" class="row" style="margin:0">{% csrf_token %}<input name="reason" placeholder="Reason"><button style="background:var(--warn);color:#fff">Ban</button></form>
+{% else %}<form method="post" action="{% url 'member_unban' m.pk %}" style="margin:0">{% csrf_token %}<button>Unban</button></form>{% endif %}</div></td>
+</tr>{% empty %}<tr><td colspan="9">No members yet.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

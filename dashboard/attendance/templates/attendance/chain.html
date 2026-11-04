@@ -1,0 +1,11 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>Blockchain ledger</h1>
+<p>Chain status: {% if online %}<span class="tag ok">Connected</span>{% else %}<span class="tag off">Not connected</span>{% endif %}</p>
+{% if not online %}<div class="card">Ganache or the contract isn't set up yet. This page fills in once Weeks 3-6 are done
+(set <code>GANACHE_URL</code> and <code>CONTRACT_ADDRESS</code>).</div>{% else %}
+<div class="card"><table><tr><th>Block</th><th>Member ID</th><th>Tx hash</th><th>Matches SQLite</th></tr>
+{% for r in records %}<tr><td>{{ r.block_number }}</td><td>{{ r.member_id }}</td><td class="mono">{{ r.tx_hash|truncatechars:22 }}</td>
+<td>{% if r.in_db %}<span class="tag ok">Yes</span>{% else %}<span class="tag bad">Missing in DB</span>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="4">Nothing on chain yet.</td></tr>{% endfor %}</table></div>{% endif %}
+{% endblock %}

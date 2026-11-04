@@ -1,0 +1,10 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>Weekly sessions <a class="btn" style="float:right;font-size:14px" href="{% url 'session_add' %}">+ New session</a></h1>
+<div class="card"><table><tr><th>Name</th><th>Day</th><th>Time</th><th>Members</th><th>Active</th><th></th></tr>
+{% for s in sessions %}<tr><td>{{ s.name }}</td><td>{{ s.get_weekday_display }}</td>
+<td>{{ s.start_time|time:"H:i" }} - {{ s.end_time|time:"H:i" }}</td><td>{{ s.n }}</td>
+<td>{% if s.is_active %}<span class="tag ok">Yes</span>{% else %}<span class="tag off">No</span>{% endif %}</td>
+<td><a href="{% url 'session_edit' s.pk %}">Edit times</a></td></tr>
+{% empty %}<tr><td colspan="6">No sessions yet. Create one, then assign members to it.</td></tr>{% endfor %}</table></div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>Attendance records</h1>
+<form class="filters" method="get">
+<input type="date" name="date" value="{{ request.GET.date }}">
+<select name="status"><option value="">All statuses</option>
+<option value="PRESENT" {% if request.GET.status == 'PRESENT' %}selected{% endif %}>Present</option>
+<option value="UNKNOWN" {% if request.GET.status == 'UNKNOWN' %}selected{% endif %}>Imposter</option>
+<option value="BANNED" {% if request.GET.status == 'BANNED' %}selected{% endif %}>Banned</option></select>
+<select name="session"><option value="">All sessions</option>
+{% for s in sessions %}<option value="{{ s.id }}" {% if request.GET.session == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select>
+<input name="q" placeholder="Name or ID" value="{{ request.GET.q }}">
+<button>Filter</button>
+<a class="btn" href="{% url 'export_csv' %}?{{ request.GET.urlencode }}">Export CSV</a>
+</form>
+<div class="card"><table>
+<tr><th>Time</th><th>ID</th><th>Name</th><th>Session</th><th>In session?</th><th>Status</th><th>Tx hash</th></tr>
+{% for r in records %}<tr>
+<td>{{ r.timestamp|date:"d M Y H:i" }}</td>
+<td>{{ r.member.member_id|default:"-" }}</td>
+<td>{{ r.member.full_name|default:"Unknown" }}</td>
+<td>{{ r.session.name|default:"-" }}</td>
+<td>{% if r.in_session %}Yes{% else %}<small>No</small>{% endif %}</td>
+<td><span class="tag {% if r.status == 'PRESENT' %}ok{% else %}bad{% endif %}">{{ r.get_status_display }}</span>{% if r.is_late %} <span class="tag warn">late {{ r.minutes_late }}m</span>{% endif %}</td>
+<td class="mono">{{ r.tx_hash|truncatechars:16|default:"-" }}</td>
+</tr>{% empty %}<tr><td colspan="7">No records match.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

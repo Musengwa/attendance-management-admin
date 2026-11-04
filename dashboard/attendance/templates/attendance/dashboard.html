@@ -1,0 +1,24 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>Today's overview</h1>
+<div class="grid">
+<div class="card stat"><b>{{ present_today }}</b><span>Present (in their session)</span></div>
+<div class="card stat"><b style="color:#fbbf24">{{ late_today }}</b><span>Late</span></div>
+<div class="card stat"><b>{{ absent_today }}</b><span>Expected, not seen</span></div>
+<div class="card stat"><b style="color:var(--warn)">{{ imposters_today }}</b><span>Imposters</span></div>
+<div class="card stat"><b>{{ total_members }}</b><span>Active members ({{ banned_members }} banned)</span></div>
+<div class="card stat"><b>{% if chain_online %}<span class="tag ok">Online</span>{% else %}<span class="tag off">Offline</span>{% endif %}</b><span>Ganache chain</span></div>
+</div>
+{% if alerts %}<div class="card" style="margin-bottom:16px"><h3 style="margin-top:0">Unread alerts</h3>
+{% for n in alerts %}<p style="margin:6px 0"><span class="tag {% if n.level == 'danger' %}bad{% else %}warn{% endif %}">{{ n.get_kind_display }}</span> {{ n.message }} <small>{{ n.created_at|date:"d M H:i" }}</small></p>{% endfor %}
+<a href="{% url 'notifications' %}">See all</a></div>{% endif %}
+<div class="card"><h3 style="margin-top:0">Recent activity</h3>
+<table><tr><th>Time</th><th>Member</th><th>Status</th><th>Session</th><th>Chain</th></tr>
+{% for r in recent %}<tr>
+<td>{{ r.timestamp|date:"d M H:i" }}</td>
+<td>{% if r.member %}{{ r.member.full_name }}{% else %}Unknown{% endif %}</td>
+<td><span class="tag {% if r.status == 'PRESENT' %}ok{% else %}bad{% endif %}">{{ r.get_status_display }}</span>{% if r.is_late %} <span class="tag warn">late {{ r.minutes_late }}m</span>{% endif %}</td>
+<td>{% if r.in_session %}yes{% else %}<small>no</small>{% endif %}</td>
+<td>{% if r.on_chain %}<span class="tag chain">on-chain</span>{% else %}<span class="tag off">DB only</span>{% endif %}</td>
+</tr>{% empty %}<tr><td colspan="5">No attendance yet.</td></tr>{% endfor %}</table></div>
+{% endblock %}

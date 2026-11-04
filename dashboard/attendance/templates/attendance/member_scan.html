@@ -1,0 +1,32 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>Scan face: {{ member.full_name }} <small>({{ member.member_id }})</small></h1>
+<div class="card" style="max-width:520px">
+<video id="v" autoplay playsinline muted style="width:100%;border-radius:8px;background:#000"></video>
+<p id="msg" style="color:var(--mute)">Allow camera access, face the camera alone, then press Start. Slowly turn your head left and right while it captures.</p>
+<button id="go">Start scan</button>
+<p><small>Only a numeric face signature is stored, never photos. No browser camera? Use <code>python register.py {{ member.member_id }}</code> in the recognition folder.</small></p>
+</div>
+<canvas id="c" style="display:none"></canvas>
+<script>
+const v = document.getElementById('v'), msg = document.getElementById('msg'), go = document.getElementById('go');
+navigator.mediaDevices.getUserMedia({video:{width:640,height:480}}).then(s => v.srcObject = s)
+  .catch(() => msg.textContent = 'Camera not available. Use register.py instead.');
+go.onclick = async () => {
+  go.disabled = true; const frames = [], c = document.getElementById('c');
+  c.width = v.videoWidth || 640; c.height = v.videoHeight || 480;
+  for (let i = 0; i < 14; i++) {
+    msg.textContent = 'Capturing ' + (i + 1) + ' / 14 ... keep turning slowly';
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    frames.push(c.toDataURL('image/jpeg', 0.85));
+    await new Promise(r => setTimeout(r, 500));
+  }
+  msg.textContent = 'Processing...';
+  const r = await fetch("{% url 'member_scan_api' member.pk %}", {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token }}'}, body: JSON.stringify({frames})});
+  const d = await r.json();
+  if (r.ok) { msg.textContent = 'Face registered (' + d.samples + ' samples). Redirecting...'; setTimeout(() => location = "{% url 'member_list' %}", 1200); }
+  else { msg.textContent = d.error; go.disabled = false; }
+};
+</script>
+{% endblock %}

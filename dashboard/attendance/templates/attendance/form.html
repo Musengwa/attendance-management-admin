@@ -1,0 +1,6 @@
+{% extends "attendance/base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<div class="card" style="max-width:440px">
+<form method="post">{% csrf_token %}{{ form.as_p }}<button>Save</button></form></div>
+{% endblock %}

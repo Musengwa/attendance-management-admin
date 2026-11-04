@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Attendance{% endblock %}</title>
+<style>
+:root{--bg:#0f1218;--card:#181d27;--line:#262d3b;--text:#e6e9ef;--mute:#8b93a5;--acc:#4ade80;--warn:#f87171;--blue:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}
+nav{display:flex;gap:6px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--line);background:var(--card)}
+nav b{margin-right:18px}nav a{color:var(--mute);text-decoration:none;padding:6px 12px;border-radius:6px}
+nav a:hover,nav a.on{background:var(--line);color:var(--text)}nav .sp{flex:1}
+main{max-width:1000px;margin:24px auto;padding:0 20px}
+h1{font-size:22px;margin:0 0 16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.stat b{display:block;font-size:30px}.stat span{color:var(--mute);font-size:13px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--mute);font-weight:500;font-size:12px;text-transform:uppercase}
+.tag{padding:2px 8px;border-radius:99px;font-size:12px}
+.ok{background:#14532d;color:var(--acc)}.bad{background:#7f1d1d;color:var(--warn)}.chain{background:#1e3a8a;color:var(--blue)}.off{background:var(--line);color:var(--mute)}
+input,select,button,.btn{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit}
+button,.btn{background:var(--acc);color:#052e16;border:0;cursor:pointer;text-decoration:none;font-weight:600}
+form.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.msg{background:#14532d;padding:10px 14px;border-radius:8px;margin-bottom:14px}
+form p{margin:0 0 12px}form label{display:block;color:var(--mute);font-size:13px;margin-bottom:4px}
+.badge{background:var(--warn);color:#fff;border-radius:99px;padding:1px 7px;font-size:12px}
+.warn{background:#713f12;color:#fbbf24}
+#toasts{position:fixed;top:70px;right:20px;display:flex;flex-direction:column;gap:10px;z-index:99;max-width:340px}
+.toast{padding:12px 14px;border-radius:8px;cursor:pointer;box-shadow:0 6px 20px #0008;border-left:5px solid}
+.toast b{display:block;margin-bottom:3px}.toast.danger{background:#3b1212;border-color:var(--warn)}.toast.warn{background:#3a2a0a;border-color:#fbbf24}
+.row{display:flex;gap:6px;align-items:center}.row input{width:130px}small{color:var(--mute)}
+.bars{display:flex;gap:4px;align-items:flex-end;height:110px}.bars div{flex:1;text-align:center;font-size:10px;color:var(--mute)}
+.bars i{display:block;background:var(--warn);border-radius:3px 3px 0 0;min-height:2px}
+.mono{font-family:ui-monospace,monospace;font-size:12px;color:var(--mute)}
+</style></head><body>
+<nav><b>FaceChain</b>
+<a href="{% url 'dashboard' %}">Dashboard</a>
+<a href="{% url 'attendance_list' %}">Attendance</a>
+<a href="{% url 'member_list' %}">Members</a>
+<a href="{% url 'session_list' %}">Sessions</a>
+<a href="{% url 'chain' %}">Blockchain</a>
+<a href="{% url 'settings' %}">Settings &amp; analytics</a>
+<span class="sp"></span>
+{% if user.is_authenticated %}<a href="{% url 'notifications' %}">&#128276; <span id="bell-count" class="badge" {% if not unread_count %}style="display:none"{% endif %}>{{ unread_count }}</span></a>{% endif %}
+{% if user.is_authenticated %}<form method="post" action="{% url 'logout' %}" style="margin:0">{% csrf_token %}<button style="background:var(--line);color:var(--text)">Logout</button></form>{% endif %}
+</nav>
+<main>
+{% for m in messages %}<div class="msg">{{ m }}</div>{% endfor %}
+{% block content %}{% endblock %}
+</main>
+<div id="toasts"></div>
+{% if user.is_authenticated %}<script>
+(function(){
+  let last = null; const bell = document.getElementById('bell-count');
+  function toast(n){
+    const el = document.createElement('div'); el.className = 'toast ' + n.level;
+    const b = document.createElement('b'); b.textContent = n.title;
+    const t = document.createElement('span'); t.textContent = n.message;
+    el.append(b, t); el.onclick = () => el.remove();
+    document.getElementById('toasts').appendChild(el); setTimeout(() => el.remove(), 12000);
+  }
+  async function poll(){
+    try {
+      const r = await fetch("{% url 'notifications_poll' %}" + (last === null ? '' : '?after=' + last), {credentials:'same-origin'});
+      if (!r.ok) return; const d = await r.json();
+      bell.textContent = d.unread; bell.style.display = d.unread > 0 ? 'inline-block' : 'none';
+      if (last !== null) d.items.forEach(toast);
+      last = d.latest;
+    } catch(e) {}
+  }
+  poll(); setInterval(poll, 5000);
+})();
+</script>{% endif %}
+</body></html>
