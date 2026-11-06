@@ -1,8 +1,8 @@
 {% extends "attendance/base.html" %}
 {% block content %}
-<h1>Notifications <form method="post" action="{% url 'notifications_read' %}" style="float:right">{% csrf_token %}<button>Mark all read</button></form></h1>
-<div class="card"><table><tr><th>Time</th><th>Type</th><th>Message</th></tr>
-{% for n in items %}<tr {% if not n.is_read %}style="background:#ffffff08"{% endif %}>
+<div class="head"><h1>Notifications</h1><form method="post" action="{% url 'notifications_read' %}">{% csrf_token %}<button class="ghost">Mark all read</button></form></div>
+<div class="card scroll"><table><tr><th>Time</th><th>Type</th><th>Message</th></tr>
+{% for n in items %}<tr {% if not n.is_read %}class="unread"{% endif %}>
 <td>{{ n.created_at|date:"d M H:i" }}</td>
 <td><span class="tag {% if n.level == 'danger' %}bad{% else %}warn{% endif %}">{{ n.get_kind_display }}</span></td>
 <td>{{ n.message }}</td></tr>{% empty %}<tr><td colspan="3">No notifications.</td></tr>{% endfor %}</table></div>

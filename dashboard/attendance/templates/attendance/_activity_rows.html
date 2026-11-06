@@ -1,0 +1,7 @@
+{% for r in recent %}<tr data-id="{{ r.pk }}">
+<td data-label="Time">{{ r.timestamp|date:"d M H:i" }}</td>
+<td data-label="Member">{% if r.member %}{{ r.member.full_name }}{% else %}Unknown{% endif %}</td>
+<td data-label="Status"><span><span class="tag {% if r.status == 'PRESENT' %}ok{% else %}bad{% endif %}">{{ r.get_status_display }}</span>{% if r.is_late %} <span class="tag warn">late {{ r.minutes_late }}m</span>{% endif %}</span></td>
+<td data-label="Session">{% if r.in_session %}yes{% else %}<small>no</small>{% endif %}</td>
+<td data-label="Chain">{% if r.on_chain %}<span class="tag chain">on-chain</span>{% else %}<span class="tag off">DB only</span>{% endif %}</td>
+</tr>{% empty %}<tr><td colspan="5">No attendance yet.</td></tr>{% endfor %}

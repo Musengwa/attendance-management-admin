@@ -8,6 +8,7 @@ from django.core.cache import cache
 from django.db.models import Count, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -18,25 +19,56 @@ from .services import analytics, chain, detection, face, notify
 
 
 # ---------------------------------------------------------------- dashboard
-@login_required
-def dashboard(request):
+def _dashboard_ctx():
     now = timezone.now()
     today = timezone.localdate(now)
     todays = AttendanceRecord.objects.filter(timestamp__date=today)
     present_ids = set(todays.filter(status="PRESENT", in_session=True).values_list("member_id", flat=True))
     expected = Member.objects.filter(status=Member.ACTIVE, session__weekday=today.weekday(), session__is_active=True)
-    ctx = {
+    metrics = [
+        {"key": "present", "label": "Present", "icon": "user-check", "tone": "good",
+         "hint": "Seen in their own session", "value": len(present_ids)},
+        {"key": "late", "label": "Late", "icon": "clock", "tone": "warning", "hint": "Also counted in Present",
+         "value": todays.filter(status="PRESENT", in_session=True, is_late=True).count()},
+        {"key": "absent", "label": "Not seen", "icon": "user-x", "tone": "neutral",
+         "hint": "Expected today, not seen yet", "value": expected.exclude(id__in=present_ids).count()},
+        {"key": "imposters", "label": "Imposters", "icon": "shield-alert", "tone": "critical",
+         "hint": "Faces that matched no member", "value": todays.filter(status="UNKNOWN").count()},
+    ]
+    peak = max(m["value"] for m in metrics) or 1
+    for m in metrics:
+        m["pct"] = round(100 * m["value"] / peak)
+    unread = Notification.objects.filter(is_read=False)
+    return {
+        "metrics": metrics,
         "total_members": Member.objects.filter(status=Member.ACTIVE).count(),
         "banned_members": Member.objects.filter(status=Member.BANNED).count(),
-        "present_today": len(present_ids),
-        "late_today": todays.filter(status="PRESENT", in_session=True, is_late=True).count(),
-        "absent_today": expected.exclude(id__in=present_ids).count(),
-        "imposters_today": todays.filter(status="UNKNOWN").count(),
         "recent": AttendanceRecord.objects.select_related("member", "session")[:10],
-        "alerts": Notification.objects.filter(is_read=False)[:5],
-        "chain_online": chain.chain_status(),
+        "alerts": unread[:5],
+        "unread_alerts": unread.count(),
+        # cached because the page refreshes every few seconds and this call reaches out to Ganache
+        "chain_online": cache.get_or_set("chain_online", chain.chain_status, 30),
     }
-    return render(request, "attendance/dashboard.html", ctx)
+
+
+@login_required
+def dashboard(request):
+    return render(request, "attendance/dashboard.html", _dashboard_ctx())
+
+
+@login_required
+def dashboard_live(request):
+    """Polled by the dashboard so the graph, alerts and activity table stay current."""
+    ctx = _dashboard_ctx()
+    return JsonResponse({
+        "metrics": [{"key": m["key"], "value": m["value"], "pct": m["pct"]} for m in ctx["metrics"]],
+        "total_members": ctx["total_members"],
+        "banned_members": ctx["banned_members"],
+        "unread_alerts": ctx["unread_alerts"],
+        "chain_online": ctx["chain_online"],
+        "alerts_html": render_to_string("attendance/_alerts.html", ctx),
+        "rows_html": render_to_string("attendance/_activity_rows.html", ctx),
+    })
 
 
 # --------------------------------------------------------------- attendance

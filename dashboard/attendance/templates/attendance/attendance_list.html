@@ -1,6 +1,7 @@
 {% extends "attendance/base.html" %}
+{% load ui %}
 {% block content %}
-<h1>Attendance records</h1>
+<div class="head"><h1>Attendance records</h1></div>
 <form class="filters" method="get">
 <input type="date" name="date" value="{{ request.GET.date }}">
 <select name="status"><option value="">All statuses</option>
@@ -10,10 +11,10 @@
 <select name="session"><option value="">All sessions</option>
 {% for s in sessions %}<option value="{{ s.id }}" {% if request.GET.session == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select>
 <input name="q" placeholder="Name or ID" value="{{ request.GET.q }}">
-<button>Filter</button>
-<a class="btn" href="{% url 'export_csv' %}?{{ request.GET.urlencode }}">Export CSV</a>
+<button>{% icon "filter" %}Filter</button>
+<a class="btn ghost" href="{% url 'export_csv' %}?{{ request.GET.urlencode }}">{% icon "download" %}Export CSV</a>
 </form>
-<div class="card"><table>
+<div class="card scroll"><table>
 <tr><th>Time</th><th>ID</th><th>Name</th><th>Session</th><th>In session?</th><th>Status</th><th>Tx hash</th></tr>
 {% for r in records %}<tr>
 <td>{{ r.timestamp|date:"d M Y H:i" }}</td>

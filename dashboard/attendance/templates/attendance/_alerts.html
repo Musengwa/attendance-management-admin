@@ -1,0 +1,3 @@
+{% load ui %}{% for n in alerts %}<li class="alert {% if n.level != 'danger' %}warn-level{% endif %}">{% if n.level == 'danger' %}{% icon "shield-alert" %}{% else %}{% icon "triangle-alert" %}{% endif %}
+<div><b>{{ n.get_kind_display }}</b>{{ n.message }}<small>{{ n.created_at|date:"d M H:i" }}</small></div></li>
+{% empty %}<li class="alert-empty">{% icon "circle-check" %}No unread alerts</li>{% endfor %}

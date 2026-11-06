@@ -1,24 +1,87 @@
 {% extends "attendance/base.html" %}
+{% load ui %}
 {% block content %}
-<h1>Today's overview</h1>
-<div class="grid">
-<div class="card stat"><b>{{ present_today }}</b><span>Present (in their session)</span></div>
-<div class="card stat"><b style="color:#fbbf24">{{ late_today }}</b><span>Late</span></div>
-<div class="card stat"><b>{{ absent_today }}</b><span>Expected, not seen</span></div>
-<div class="card stat"><b style="color:var(--warn)">{{ imposters_today }}</b><span>Imposters</span></div>
-<div class="card stat"><b>{{ total_members }}</b><span>Active members ({{ banned_members }} banned)</span></div>
-<div class="card stat"><b>{% if chain_online %}<span class="tag ok">Online</span>{% else %}<span class="tag off">Offline</span>{% endif %}</b><span>Ganache chain</span></div>
+<span id="chain-pill" class="pill boxed {% if chain_online %}on{% endif %}"><i></i><span>Ganache {% if chain_online %}online{% else %}offline{% endif %}</span></span>
+<div class="head"><h1>Today's overview</h1></div>
+
+<div class="split">
+  <section class="card">
+    <div class="card-head"><h2>Attendance</h2>
+      <small><span id="total-members">{{ total_members }}</span> active members, <span id="banned-members">{{ banned_members }}</span> banned</small></div>
+    <ul class="chart">
+      {% for m in metrics %}
+      <li class="metric {{ m.tone }}" data-metric="{{ m.key }}" tabindex="0" aria-label="{{ m.label }}: {{ m.value }}. {{ m.hint }}">
+        <div class="plot"><div class="track"><div class="bar" style="--pct:{{ m.pct }}"><span class="val">{{ m.value }}</span></div></div></div>
+        <div class="label">{% icon m.icon %}<span>{{ m.label }}</span></div>
+        <div class="tip" role="presentation">{{ m.hint }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="card alerts">
+    <div class="card-head"><h2>Unread alerts</h2><span id="alert-count" class="count">{{ unread_alerts }}</span></div>
+    <ul id="alert-list" class="alert-list">{% include "attendance/_alerts.html" %}</ul>
+    <div class="alerts-foot"><a href="{% url 'notifications' %}">See all</a></div>
+  </section>
 </div>
-{% if alerts %}<div class="card" style="margin-bottom:16px"><h3 style="margin-top:0">Unread alerts</h3>
-{% for n in alerts %}<p style="margin:6px 0"><span class="tag {% if n.level == 'danger' %}bad{% else %}warn{% endif %}">{{ n.get_kind_display }}</span> {{ n.message }} <small>{{ n.created_at|date:"d M H:i" }}</small></p>{% endfor %}
-<a href="{% url 'notifications' %}">See all</a></div>{% endif %}
-<div class="card"><h3 style="margin-top:0">Recent activity</h3>
-<table><tr><th>Time</th><th>Member</th><th>Status</th><th>Session</th><th>Chain</th></tr>
-{% for r in recent %}<tr>
-<td>{{ r.timestamp|date:"d M H:i" }}</td>
-<td>{% if r.member %}{{ r.member.full_name }}{% else %}Unknown{% endif %}</td>
-<td><span class="tag {% if r.status == 'PRESENT' %}ok{% else %}bad{% endif %}">{{ r.get_status_display }}</span>{% if r.is_late %} <span class="tag warn">late {{ r.minutes_late }}m</span>{% endif %}</td>
-<td>{% if r.in_session %}yes{% else %}<small>no</small>{% endif %}</td>
-<td>{% if r.on_chain %}<span class="tag chain">on-chain</span>{% else %}<span class="tag off">DB only</span>{% endif %}</td>
-</tr>{% empty %}<tr><td colspan="5">No attendance yet.</td></tr>{% endfor %}</table></div>
+
+<section class="card">
+  <div class="card-head"><h2>Recent activity</h2><span id="live" class="pill live on"><i></i><span>Live</span></span></div>
+  <div class="scroll">
+    <table class="stack">
+      <thead><tr><th>Time</th><th>Member</th><th>Status</th><th>Session</th><th>Chain</th></tr></thead>
+      <tbody id="activity">{% include "attendance/_activity_rows.html" %}</tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const live = $('live'), rows = $('activity');
+
+  // only touch the DOM on change, so scroll position and hover survive a refresh
+  function swap(el, html){
+    if (el.lastHtml === html) return;
+    el.lastHtml = html; el.innerHTML = html;
+  }
+
+  function setActivity(html){
+    const seen = new Set([...rows.querySelectorAll('tr[data-id]')].map(tr => tr.dataset.id));
+    swap(rows, html);
+    rows.querySelectorAll('tr[data-id]').forEach(tr => { if (!seen.has(tr.dataset.id)) tr.classList.add('new'); });
+  }
+
+  function apply(d){
+    d.metrics.forEach(m => {
+      const el = document.querySelector('[data-metric="' + m.key + '"]');
+      el.querySelector('.bar').style.setProperty('--pct', m.pct);
+      el.querySelector('.val').textContent = m.value;
+      el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/: \d+\./, ': ' + m.value + '.'));
+    });
+    $('total-members').textContent = d.total_members;
+    $('banned-members').textContent = d.banned_members;
+    $('alert-count').textContent = d.unread_alerts;
+    swap($('alert-list'), d.alerts_html);
+    setActivity(d.rows_html);
+    $('chain-pill').classList.toggle('on', d.chain_online);
+    $('chain-pill').lastElementChild.textContent = 'Ganache ' + (d.chain_online ? 'online' : 'offline');
+  }
+
+  async function refresh(){
+    if (document.hidden) return;
+    let ok = false;
+    try {
+      const r = await fetch("{% url 'dashboard_live' %}", {credentials:'same-origin'});
+      if (r.ok) { apply(await r.json()); ok = true; }
+    } catch(e) {}
+    live.classList.toggle('stale', !ok);
+    live.lastElementChild.textContent = ok ? 'Live' : 'Reconnecting';
+  }
+
+  setInterval(refresh, 5000);
+  document.addEventListener('visibilitychange', refresh);
+})();
+</script>
 {% endblock %}
