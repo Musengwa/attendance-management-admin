@@ -1,7 +1,150 @@
-cd dashboard
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py seed_demo      # optional demo data
-cd ../recognition && python get_models.py   # needed for the face scan
-cd ../dashboard && python manage.py runserver
+# FaceChain
+
+Face-recognition attendance with an admin dashboard. A camera script recognises
+faces and reports them to a Django dashboard, which marks members present or late,
+flags imposters and banned members, and shows alerts live. Attendance can also be
+anchored on a local Ganache blockchain and compared against the database.
+
+No photos are stored. Only numeric face signatures (embeddings) are saved.
+
+
+## Project layout
+
+    dashboard/      Django admin site and the API the camera script talks to
+      attendance/services/
+        detection.py    what happens each time a face is seen (all business rules)
+        rules.py        session timing: is a session running, is someone late
+        notify.py       alerts: imposters, imposter spikes, inactive members
+        analytics.py    attendance, tardiness and imposter rates
+        face.py         turns browser webcam frames into embeddings
+        chain.py        reads attendance records from the blockchain
+      attendance/static/attendance/   stylesheet and self-hosted fonts
+    recognition/    Camera-side tools
+      get_models.py     downloads the YuNet and SFace face models
+      register.py       registers a face from the webcam (command-line fallback)
+      matcher.py        compares a live face to every registered face
+
+
+## Setup
+
+Needs Python 3.12 or newer (Django 6) and a webcam for face scanning.
+
+    cd dashboard
+    pip install -r requirements.txt
+    python manage.py migrate
+    python manage.py createsuperuser
+    python manage.py seed_demo      # optional demo data
+    cd ../recognition && pip install -r requirements.txt
+    python get_models.py            # needed for the face scan
+    cd ../dashboard && python manage.py runserver
+
+Then open http://127.0.0.1:8000 and sign in with the superuser you created.
+The Django admin is at /admin/.
+
+
+## Using it
+
+1. Sessions: create the weekly sessions, each with a day, start time and end time.
+2. Members: register a member and assign them to a session.
+3. Scan: the Members page opens a browser face scan right after registering.
+   If the browser camera is unavailable, use the fallback:
+
+       cd recognition
+       python register.py <member_id>
+
+4. Dashboard: watch today's attendance, unread alerts and recent activity.
+   The page refreshes itself every 5 seconds.
+5. Settings & analytics: view rates over 7, 30 or 90 days and adjust the rules.
+
+
+## How a detection is handled
+
+Every face the camera reports goes to `detection.process_detection`:
+
+| Seen | Result |
+|---|---|
+| Unregistered face | Recorded as an imposter. Alerts if a session is running, and a separate alert fires on a spike of imposters. |
+| Banned member | Recorded as banned and raises an alert. Banned members stay in the recognition set so they can be flagged. |
+| Member in their own session | Marked present once per day, and late if they arrive after the grace period. |
+| Member outside their session | Recorded at most once an hour, and does not count as attendance. |
+
+Members who miss several sessions in a row raise an inactivity alert.
+
+These values can be changed on the Settings page:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Late grace minutes | 10 | Minutes after the start before someone counts as late |
+| Early window minutes | 15 | How early before the start attendance is accepted |
+| Imposter spike count | 5 | Unregistered faces needed to trigger a spike alert |
+| Imposter spike minutes | 30 | The time window for that count |
+| Inactive sessions threshold | 3 | Missed sessions in a row before an inactivity alert |
+
+
+## Configuration
+
+All of these are optional environment variables.
+
+| Variable | Default | Used for |
+|---|---|---|
+| `ATTENDANCE_API_TOKEN` | `dev-token-change-me` | Shared secret between the dashboard and camera scripts. Set the same value on both sides. |
+| `DASHBOARD_URL` | `http://127.0.0.1:8000` | Where the recognition scripts find the dashboard |
+| `GANACHE_URL` | `http://127.0.0.1:7545` | Ganache RPC address |
+| `CONTRACT_ADDRESS` | empty | Deployed attendance contract. The chain shows as offline until this is set. |
+| `CONTRACT_ABI_PATH` | `blockchain/Attendance.abi.json` | Contract ABI file |
+
+The time zone is set to Africa/Lusaka in `dashboard/config/settings.py`.
+
+
+## API
+
+These endpoints are for the camera scripts. Each request needs this header:
+
+    Authorization: Token <ATTENDANCE_API_TOKEN>
+
+| Method and path | Purpose |
+|---|---|
+| `POST /api/attendance/` | Report a detection |
+| `GET /api/embeddings/` | Download every registered face, including banned members |
+| `GET /api/members/<member_id>/face/` | Check that a member exists |
+| `POST /api/members/<member_id>/face/` | Save embeddings, as `{"embeddings": [[...128 floats], ...]}` |
+
+Body for reporting a detection. Use `null` for `member_id` when the face is unknown:
+
+    {"member_id": "202400004", "confidence": 0.71, "tx_hash": "0x...", "block_number": 12}
+
+
+## Tests
+
+    cd dashboard
+    python manage.py test attendance
+    python -m flake8 attendance
+
+
+## Current status
+
+- The dashboard, rules, alerts, analytics and face registration all work.
+- The live camera loop is not in the repo yet. `matcher.py` has the matching helpers,
+  but nothing runs the camera and posts to `/api/attendance/`. Until it exists, you
+  can test by posting to that endpoint directly.
+- The `blockchain/` folder (contract and ABI) is not in the repo yet. The Blockchain
+  page shows "Not connected" until it is deployed and configured.
+
+
+## Before deploying
+
+The defaults in `dashboard/config/settings.py` are for local development only:
+
+- Set `DEBUG = False`, fill in `ALLOWED_HOSTS` and replace `SECRET_KEY`.
+- Set a strong `ATTENDANCE_API_TOKEN`.
+- Set `STATIC_ROOT` and run `python manage.py collectstatic`, because styles and fonts
+  are static files.
+- Serve over HTTPS, since browsers only allow camera access on secure pages
+  (localhost is the exception).
+
+
+## Credits
+
+- Icons: Lucide (ISC licence)
+- Fonts: Inter and JetBrains Mono (SIL Open Font License, copies in `static/attendance/fonts/`)
+- Face models: YuNet and SFace from OpenCV Zoo
