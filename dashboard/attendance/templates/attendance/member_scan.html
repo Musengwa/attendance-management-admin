@@ -1,11 +1,12 @@
 {% extends "attendance/base.html" %}
+{% load ui %}
 {% block content %}
-<h1>Scan face: {{ member.full_name }} <small>({{ member.member_id }})</small></h1>
-<div class="card" style="max-width:520px">
-<video id="v" autoplay playsinline muted style="width:100%;border-radius:8px;background:#000"></video>
-<p id="msg" style="color:var(--mute)">Allow camera access, face the camera alone, then press Start. Slowly turn your head left and right while it captures.</p>
-<button id="go">Start scan</button>
-<p><small>Only a numeric face signature is stored, never photos. No browser camera? Use <code>python register.py {{ member.member_id }}</code> in the recognition folder.</small></p>
+<div class="head"><h1>Scan face: {{ member.full_name }} <small>({{ member.member_id }})</small></h1></div>
+<div class="card narrow">
+<video id="v" class="video" autoplay playsinline muted></video>
+<p id="msg">Allow camera access, face the camera alone, then press Start. Slowly turn your head left and right while it captures.</p>
+<button id="go">{% icon "scan-face" %}Start scan</button>
+<p style="margin:12px 0 0"><small>Only a numeric face signature is stored, never photos. No browser camera? Use <code>python register.py {{ member.member_id }}</code> in the recognition folder.</small></p>
 </div>
 <canvas id="c" style="display:none"></canvas>
 <script>

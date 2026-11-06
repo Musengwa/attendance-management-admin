@@ -164,6 +164,16 @@ class ViewTests(Base):
     def test_login_required(self):
         self.client.logout()
         self.assertEqual(self.client.get("/").status_code, 302)
+        self.assertEqual(self.client.get("/dashboard/live/").status_code, 302)
+
+    def test_dashboard_live(self):
+        R.objects.create(member=None, status="UNKNOWN", in_session=True, confidence=0.1)
+        d = self.client.get("/dashboard/live/").json()
+        metrics = {m["key"]: m for m in d["metrics"]}
+        self.assertEqual(set(metrics), {"present", "late", "absent", "imposters"})
+        self.assertEqual(metrics["imposters"]["value"], 1)
+        self.assertEqual(max(m["pct"] for m in d["metrics"]), 100)
+        self.assertIn("data-id=", d["rows_html"])
 
     def test_ban_and_unban(self):
         self.client.post(f"/members/{self.m.pk}/ban/", {"reason": "Fighting"})

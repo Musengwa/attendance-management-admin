@@ -1,7 +1,7 @@
 {% extends "attendance/base.html" %}
 {% block content %}
 <div class="card" style="max-width:360px;margin:60px auto">
-<h1>Admin login</h1>
-<form method="post">{% csrf_token %}{{ form.as_p }}<button>Sign in</button></form>
+<div class="head"><h1>Admin login</h1></div>
+<form class="stack-form" method="post">{% csrf_token %}{{ form.as_p }}<button>Sign in</button></form>
 </div>
 {% endblock %}
