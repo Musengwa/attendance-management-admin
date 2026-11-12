@@ -8,9 +8,12 @@ from ..models import Member, Notification
 from . import notify, rules
 
 
-def process_detection(member_id, confidence=None, tx_hash="", block_number=None, now=None):
+def process_detection(member_id, confidence=None, tx_hash="", block_number=None, now=None,
+                      event_id=None, camera_id=""):
+    """`now` is when the face was captured, which can be in the past for events the matcher queued."""
     now = now or timezone.now()
-    base = dict(confidence=confidence, tx_hash=tx_hash or "", block_number=block_number, timestamp=now)
+    base = dict(confidence=confidence, tx_hash=tx_hash or "", block_number=block_number, timestamp=now,
+                event_id=event_id, camera_id=camera_id)
     member = Member.objects.filter(member_id=member_id).select_related("session").first() if member_id else None
 
     # 1. Unregistered face = imposter
@@ -40,9 +43,11 @@ def process_detection(member_id, confidence=None, tx_hash="", block_number=None,
     if info["in_session"]:
         if mine.filter(in_session=True, timestamp__date=timezone.localdate(now)).exists():
             return {"result": "already_marked"}
-    elif mine.filter(timestamp__gte=now - timedelta(hours=1)).exists():
+    elif mine.filter(timestamp__range=(now - timedelta(hours=1), now + timedelta(hours=1))).exists():
+        # both sides of `now`: replayed events can arrive after later ones
         return {"result": "already_seen"}
 
     rec = R.objects.create(member=member, status=R.PRESENT, session=info["session"], in_session=info["in_session"],
                            minutes_late=info["minutes_late"], is_late=info["is_late"], **base)
-    return {"result": "recorded", "id": rec.id, "in_session": rec.in_session, "late": rec.is_late}
+    return {"result": "recorded", "id": rec.id, "in_session": rec.in_session, "late": rec.is_late,
+            "session_id": rec.session_id if rec.in_session else None}

@@ -1,49 +1,46 @@
-"""Turns webcam frames (from the browser) into SFace embeddings. No images are kept."""
-import base64
-import threading
+"""Registration: browser frames -> embedding service /v1/embed/batch -> embeddings. No images are kept."""
+from collections import Counter
 
+import httpx
 from django.conf import settings
 
-MIN_SAMPLES = 5
-_lock = threading.Lock()
-_models = {}
+MAX_FRAMES = 30  # the embedding service's MAX_BATCH_IMAGES
+
+REASONS = {"no_face": "no face", "multiple_faces": "more than one face", "face_too_small": "too far from camera",
+           "blurry": "blurry", "low_confidence": "face unclear", "invalid_image": "unreadable image"}
 
 
 class FaceError(Exception):
     pass
 
 
-def _load():
-    import cv2
-    if not _models:
-        d = settings.FACE_MODEL_DIR
-        det, rec = d / "face_detection_yunet_2023mar.onnx", d / "face_recognition_sface_2021dec.onnx"
-        if not det.exists() or not rec.exists():
-            raise FaceError("Face models not found. Run `python get_models.py` in the recognition folder.")
-        _models["det"] = cv2.FaceDetectorYN.create(str(det), "", (320, 320), score_threshold=0.9)
-        _models["rec"] = cv2.FaceRecognizerSF.create(str(rec), "")
-    return cv2, _models["det"], _models["rec"]
-
-
 def embeddings_from_data_urls(frames):
-    import numpy as np
-    out = []
-    with _lock:
-        cv2, det, rec = _load()
-        for url in frames:
-            try:
-                raw = base64.b64decode(url.split(",", 1)[-1])
-            except Exception:
-                continue
-            img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
-                continue
-            h, w = img.shape[:2]
-            det.setInputSize((w, h))
-            _, faces = det.detect(img)
-            if faces is None or len(faces) != 1:
-                continue  # skip frames with no face or more than one person
-            out.append(rec.feature(rec.alignCrop(img, faces[0]))[0].tolist())
-    if len(out) < MIN_SAMPLES:
-        raise FaceError(f"Only {len(out)} usable frames. Face the camera alone, in good light, and try again.")
-    return out
+    """Returns (model, embeddings). Raises FaceError with a message the admin can act on."""
+    if not frames:
+        raise FaceError("No frames received.")
+    try:
+        r = httpx.post(f"{settings.EMBED_URL.rstrip('/')}/v1/embed/batch",
+                       json={"images_b64": frames[:MAX_FRAMES], "min_usable": settings.FACE_MIN_SAMPLES},
+                       headers={"Authorization": f"Token {settings.EMBED_API_TOKEN}"}, timeout=60)
+    except httpx.HTTPError as e:
+        raise FaceError("The face service is not reachable. Is the embedding service running?") from e
+
+    if r.status_code == 422:  # not enough usable frames; same body shape as 200
+        body = r.json()
+        counts = Counter(x["reason"] for x in body.get("rejected", []))
+        why = ", ".join(f"{n} {REASONS.get(k, k)}" for k, n in counts.items())
+        raise FaceError(f"Only {body['usable']} of {body['total']} frames were usable, "
+                        f"at least {body.get('min_usable', settings.FACE_MIN_SAMPLES)} are needed"
+                        f"{f' ({why})' if why else ''}. "
+                        "Face the camera alone, in good light, a little closer, and try again.")
+    if r.status_code == 401:
+        raise FaceError("The face service rejected Django's EMBED_API_TOKEN.")
+    if r.status_code == 413:
+        raise FaceError("The scan was too large for the face service.")
+    if r.status_code != 200:
+        raise FaceError(f"Face service error (HTTP {r.status_code}).")
+
+    body = r.json()
+    if body["model"] != settings.FACE_MODEL:
+        raise FaceError(f"Face service runs model {body['model']!r}, expected {settings.FACE_MODEL!r}.")
+    return body["model"], body["embeddings"]

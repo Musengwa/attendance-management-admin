@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -12,6 +13,8 @@ class AppSettings(models.Model):
     imposter_spike_count = models.PositiveIntegerField(default=5, help_text="Unregistered faces needed to trigger a 'many imposters' alert")
     imposter_spike_minutes = models.PositiveIntegerField(default=30, help_text="...within this many minutes")
     inactive_sessions_threshold = models.PositiveIntegerField(default=3, help_text="Consecutive missed sessions before an inactivity alert")
+    # changes whenever embeddings, bans or session membership change; the matcher re-downloads faces when it does
+    gallery_version = models.PositiveBigIntegerField(default=1, editable=False)
 
     @classmethod
     def load(cls):
@@ -47,6 +50,7 @@ class Member(models.Model):
     ban_reason = models.CharField(max_length=200, blank=True)
     banned_at = models.DateTimeField(null=True, blank=True)
     embeddings = models.JSONField(default=list, blank=True)  # list of 128-float SFace vectors (no photos stored)
+    embedding_model = models.CharField(max_length=60, blank=True)  # which model made the embeddings
     face_registered_at = models.DateTimeField(null=True, blank=True)
     registered_at = models.DateTimeField(default=timezone.now)
 
@@ -55,7 +59,8 @@ class Member(models.Model):
 
     @property
     def face_registered(self):
-        return bool(self.embeddings)
+        # embeddings from any other model (e.g. the old built-in scan) are never sent to the matcher
+        return bool(self.embeddings) and self.embedding_model == settings.FACE_MODEL
 
     def __str__(self):
         return f"{self.full_name} ({self.member_id})"
@@ -75,6 +80,8 @@ class AttendanceRecord(models.Model):
     timestamp = models.DateTimeField(default=timezone.now)
     tx_hash = models.CharField(max_length=80, blank=True)
     block_number = models.PositiveIntegerField(null=True, blank=True)
+    camera_id = models.CharField(max_length=50, blank=True)
+    event_id = models.UUIDField(null=True, blank=True, unique=True, help_text="Matcher's idempotency key")
 
     class Meta:
         ordering = ["-timestamp"]

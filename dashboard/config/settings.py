@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-&!m1-l-hy=-n5+e)&wra1=@k%hy^+(dl*ccfjr7t=!c*^#o60c
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 
 
 # Application definition
@@ -136,12 +136,17 @@ LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 TIME_ZONE = "Africa/Lusaka"
 
-# Shared secret the recognition script sends so only it can post attendance
+# Shared secret the matcher service sends (its DJANGO_API_TOKEN must equal this)
 API_TOKEN = os.environ.get("ATTENDANCE_API_TOKEN", "dev-token-change-me")
+
+# Embedding service: turns registration frames into embeddings (see API_CONTRACT.md in the recognition repo)
+EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8000")
+EMBED_API_TOKEN = os.environ.get("EMBED_API_TOKEN", "")
+FACE_MODEL = "yunet2023mar+sface2021dec"  # must match the embedding service exactly
+FACE_MIN_SAMPLES = 5
 
 # Blockchain (Ganache) - used by attendance/services/chain.py
 GANACHE_URL = os.environ.get("GANACHE_URL", "http://127.0.0.1:7545")
 CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
 CONTRACT_ABI_PATH = os.environ.get("CONTRACT_ABI_PATH", str(BASE_DIR.parent / "blockchain" / "Attendance.abi.json"))
 
-FACE_MODEL_DIR = BASE_DIR.parent / "recognition" / "models"
