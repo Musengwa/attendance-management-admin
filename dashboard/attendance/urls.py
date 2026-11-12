@@ -22,6 +22,7 @@ urlpatterns = [
     path("notifications/poll/", v.notifications_poll, name="notifications_poll"),
     path("settings/", v.settings_page, name="settings"),
     path("chain/", v.chain_view, name="chain"),
+    path("api/sessions/active/", v.api_sessions_active, name="api_sessions_active"),
     path("api/attendance/", v.api_record_attendance, name="api_attendance"),
     path("api/members/<str:member_id>/face/", v.api_member_face, name="api_member_face"),
     path("api/embeddings/", v.api_embeddings, name="api_embeddings"),

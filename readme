@@ -1,45 +1,95 @@
 # FaceChain
 
-Face-recognition attendance with an admin dashboard. A camera script recognises
-faces and reports them to a Django dashboard, which marks members present or late,
-flags imposters and banned members, and shows alerts live. Attendance can also be
-anchored on a local Ganache blockchain and compared against the database.
+Face-recognition attendance with an admin dashboard. This repo is the Django dashboard.
+It works with two services from the `face-recognition-attendance` repo:
+
+    camera ──► matcher_service ──/v1/embed──────────────► embedding_service
+                    │                                          ▲
+                    └── /api/sessions/active/, /api/embeddings/,│ /v1/embed/batch
+                        /api/attendance/ ──► Django dashboard ─┘ (member scan page)
+
+- The embedding service is the only part that runs the face models. Django sends it
+  the frames from the member scan page and stores the embeddings it returns.
+- The matcher service watches the camera, matches faces against the members it
+  downloads from Django, and reports each person it sees.
+- Django decides what a sighting means (present, late, banned or imposter), raises
+  alerts and shows everything live on the dashboard.
 
 No photos are stored. Only numeric face signatures (embeddings) are saved.
+The rules for all three parts are in `API_CONTRACT.md` in the recognition repo.
 
 
 ## Project layout
 
-    dashboard/      Django admin site and the API the camera script talks to
+    dashboard/      Django admin site and the API the matcher talks to
       attendance/services/
         detection.py    what happens each time a face is seen (all business rules)
         rules.py        session timing: is a session running, is someone late
         notify.py       alerts: imposters, imposter spikes, inactive members
         analytics.py    attendance, tardiness and imposter rates
-        face.py         turns browser webcam frames into embeddings
+        face.py         sends scan frames to the embedding service
+        gallery.py      gallery_version: tells the matcher when faces or bans change
         chain.py        reads attendance records from the blockchain
       attendance/static/attendance/   stylesheet and self-hosted fonts
-    recognition/    Camera-side tools
-      get_models.py     downloads the YuNet and SFace face models
-      register.py       registers a face from the webcam (command-line fallback)
-      matcher.py        compares a live face to every registered face
+    recognition/    Legacy camera scripts from before the matcher service (see Current status)
+
+
+## Ports and tokens
+
+| Service | Port | Checks token | Sends token |
+|---|---|---|---|
+| embedding_service | 8000 | `EMBED_API_TOKEN` (E) | none |
+| Django | 8001 | `ATTENDANCE_API_TOKEN` (D) | E, to the embedding service |
+| matcher_service | 8090 (status page) | none | E to the embedding service, D to Django |
+
+The matcher's `DJANGO_API_TOKEN` must equal Django's `ATTENDANCE_API_TOKEN`.
+Generate a token with:
+
+    python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 
 ## Setup
 
-Needs Python 3.12 or newer (Django 6) and a webcam for face scanning.
+Needs Python 3.12 or newer (Django 6).
 
     cd dashboard
     pip install -r requirements.txt
     python manage.py migrate
     python manage.py createsuperuser
     python manage.py seed_demo      # optional demo data
-    cd ../recognition && pip install -r requirements.txt
-    python get_models.py            # needed for the face scan
-    cd ../dashboard && python manage.py runserver
 
-Then open http://127.0.0.1:8000 and sign in with the superuser you created.
-The Django admin is at /admin/.
+
+## Running everything
+
+PowerShell, one window per service. Replace E and D with your real tokens.
+
+1. Embedding service (recognition repo):
+
+       cd face-recognition-attendance\embedding_service
+       python get_models.py
+       $env:EMBED_API_TOKEN="E"; python -m app
+
+2. Django:
+
+       cd "attendance admin\dashboard"
+       $env:ATTENDANCE_API_TOKEN="D"; $env:EMBED_URL="http://127.0.0.1:8000"; $env:EMBED_API_TOKEN="E"
+       python manage.py runserver 0.0.0.0:8001
+
+3. Check Django's API:
+
+       curl.exe -H "Authorization: Token D" http://127.0.0.1:8001/api/sessions/active/
+       curl.exe -H "Authorization: Token D" "http://127.0.0.1:8001/api/embeddings/?scope=all"
+
+4. Matcher (recognition repo):
+
+       cd face-recognition-attendance\matcher_service
+       $env:CAMERA_SOURCE="http://<phone-ip>:8080/video"; $env:CAMERA_ID="door-1"
+       $env:EMBED_URL="http://127.0.0.1:8000"; $env:EMBED_API_TOKEN="E"
+       $env:DJANGO_URL="http://127.0.0.1:8001"; $env:DJANGO_API_TOKEN="D"
+       python -m app
+
+Open http://127.0.0.1:8001 and sign in. The Django admin is at /admin/.
+The matcher's status page is at http://127.0.0.1:8090/status.
 
 
 ## Using it
@@ -47,26 +97,30 @@ The Django admin is at /admin/.
 1. Sessions: create the weekly sessions, each with a day, start time and end time.
 2. Members: register a member and assign them to a session.
 3. Scan: the Members page opens a browser face scan right after registering.
-   If the browser camera is unavailable, use the fallback:
-
-       cd recognition
-       python register.py <member_id>
-
+   The embedding service must be running. If too few frames are usable, the page
+   says why (blurry, more than one face, too far away) so the member can retry.
 4. Dashboard: watch today's attendance, unread alerts and recent activity.
    The page refreshes itself every 5 seconds.
 5. Settings & analytics: view rates over 7, 30 or 90 days and adjust the rules.
 
+The browser camera only works on `localhost` or over HTTPS. If an admin opens the
+dashboard from another machine at `http://192.168.x.x:8001`, the scan page says
+"Camera not available". Scan on the Django machine itself, or serve Django over HTTPS.
+
 
 ## How a detection is handled
 
-Every face the camera reports goes to `detection.process_detection`:
+Every event from the matcher goes to `detection.process_detection`. It is judged at
+`captured_at` (when the camera saw the face), not when the request arrived. So events
+the matcher queued during a Django outage still get the right late and in-session result.
 
 | Seen | Result |
 |---|---|
 | Unregistered face | Recorded as an imposter. Alerts if a session is running, and a separate alert fires on a spike of imposters. |
-| Banned member | Recorded as banned and raises an alert. Banned members stay in the recognition set so they can be flagged. |
+| Banned member | Recorded as banned and raises an alert. Banned members are always in the matcher's gallery so they can be flagged. |
 | Member in their own session | Marked present once per day, and late if they arrive after the grace period. |
 | Member outside their session | Recorded at most once an hour, and does not count as attendance. |
+| Same `event_id` again | Ignored (`already_seen`): the matcher retried something Django already stored. |
 
 Members who miss several sessions in a row raise an inactivity alert.
 
@@ -83,35 +137,54 @@ These values can be changed on the Settings page:
 
 ## Configuration
 
-All of these are optional environment variables.
+All of these are environment variables.
 
 | Variable | Default | Used for |
 |---|---|---|
-| `ATTENDANCE_API_TOKEN` | `dev-token-change-me` | Shared secret between the dashboard and camera scripts. Set the same value on both sides. |
-| `DASHBOARD_URL` | `http://127.0.0.1:8000` | Where the recognition scripts find the dashboard |
+| `ATTENDANCE_API_TOKEN` | `dev-token-change-me` | Token the matcher must send. Equal to the matcher's `DJANGO_API_TOKEN`. |
+| `EMBED_URL` | `http://127.0.0.1:8000` | Where Django finds the embedding service |
+| `EMBED_API_TOKEN` | empty | Token Django sends to the embedding service |
+| `ALLOWED_HOSTS` | `127.0.0.1,localhost` | Comma-separated. Add Django's LAN IP if the matcher runs on another machine. |
 | `GANACHE_URL` | `http://127.0.0.1:7545` | Ganache RPC address |
 | `CONTRACT_ADDRESS` | empty | Deployed attendance contract. The chain shows as offline until this is set. |
 | `CONTRACT_ABI_PATH` | `blockchain/Attendance.abi.json` | Contract ABI file |
 
-The time zone is set to Africa/Lusaka in `dashboard/config/settings.py`.
+`FACE_MODEL` in `dashboard/config/settings.py` is `yunet2023mar+sface2021dec`, and it
+must match the embedding service exactly. Embeddings from any other model are never
+sent to the matcher. The time zone is Africa/Lusaka, and the matcher sends times with
+their UTC offset, so keep the matcher machine's clock correct.
 
 
 ## API
 
-These endpoints are for the camera scripts. Each request needs this header:
+Used by the matcher service, as defined in `API_CONTRACT.md` section 2.
+Every request needs this header:
 
     Authorization: Token <ATTENDANCE_API_TOKEN>
 
 | Method and path | Purpose |
 |---|---|
-| `POST /api/attendance/` | Report a detection |
-| `GET /api/embeddings/` | Download every registered face, including banned members |
-| `GET /api/members/<member_id>/face/` | Check that a member exists |
-| `POST /api/members/<member_id>/face/` | Save embeddings, as `{"embeddings": [[...128 floats], ...]}` |
+| `GET /api/sessions/active/` | Sessions running now, plus `gallery_version` |
+| `GET /api/embeddings/?session=7,9` | Faces of those sessions' members, plus every banned member |
+| `GET /api/embeddings/?scope=all` | Every registered face |
+| `POST /api/attendance/` | Report a sighting |
+| `GET /api/members/<member_id>/face/` | Check that a member exists (command-line registration) |
+| `POST /api/members/<member_id>/face/` | Save embeddings, as `{"model": "yunet2023mar+sface2021dec", "embeddings": [...]}` |
 
-Body for reporting a detection. Use `null` for `member_id` when the face is unknown:
+`gallery_version` changes whenever a member, ban or session changes. The matcher checks
+it every 10 seconds and re-downloads faces as soon as it changes. Member and session
+saves update it automatically. If you add a bulk `update()` or `bulk_create()` on
+members, call `gallery.bump()` afterwards, because those skip the signals.
 
-    {"member_id": "202400004", "confidence": 0.71, "tx_hash": "0x...", "block_number": 12}
+Reporting a sighting (`member_id` is `null` for an unknown face):
+
+    {"member_id": "202400004", "confidence": 0.71, "camera_id": "door-1",
+     "captured_at": "2026-11-09T09:12:30+02:00", "tx_hash": "", "block_number": null,
+     "event_id": "5f0c2a8e-3a59-4b5e-9f3e-0c1b7e1d2a44"}
+
+The reply's `status` is `recorded`, `imposter` or `banned` (HTTP 201), or
+`already_marked` or `already_seen` (HTTP 200). A malformed event gets HTTP 400, and the
+matcher keeps it as "dead" in its outbox instead of retrying.
 
 
 ## Tests
@@ -120,23 +193,32 @@ Body for reporting a detection. Use `null` for `member_id` when the face is unkn
     python manage.py test attendance
     python -m flake8 attendance
 
+The face-service tests mock HTTP, so the embedding service doesn't need to be running.
+
 
 ## Current status
 
-- The dashboard, rules, alerts, analytics and face registration all work.
-- The live camera loop is not in the repo yet. `matcher.py` has the matching helpers,
-  but nothing runs the camera and posts to `/api/attendance/`. Until it exists, you
-  can test by posting to that endpoint directly.
+- The dashboard, rules, alerts, analytics, registration through the embedding
+  service and the matcher API all work.
+- Members scanned before the switch to the embedding service show as "Not scanned"
+  and are not sent to the matcher. Re-scan them from the Members page.
+- `recognition/` is left over from before the matcher service. `register.py` no longer
+  works, because uploads now need the `model` string. For command-line registration,
+  use `tests/register_face.py` in the recognition repo, pointed at
+  `/api/members/<member_id>/face/`. Delete `recognition/` once the new setup is
+  running smoothly.
 - The `blockchain/` folder (contract and ABI) is not in the repo yet. The Blockchain
-  page shows "Not connected" until it is deployed and configured.
+  page shows "Not connected" until it is deployed and configured. When it is, write to
+  the chain either in the matcher's `on_recorded` hook or in Django after a `recorded`
+  result, but not both.
 
 
 ## Before deploying
 
 The defaults in `dashboard/config/settings.py` are for local development only:
 
-- Set `DEBUG = False`, fill in `ALLOWED_HOSTS` and replace `SECRET_KEY`.
-- Set a strong `ATTENDANCE_API_TOKEN`.
+- Set `DEBUG = False`, set `ALLOWED_HOSTS` and replace `SECRET_KEY`.
+- Set strong `ATTENDANCE_API_TOKEN` and `EMBED_API_TOKEN` values.
 - Set `STATIC_ROOT` and run `python manage.py collectstatic`, because styles and fonts
   are static files.
 - Serve over HTTPS, since browsers only allow camera access on secure pages
@@ -147,4 +229,4 @@ The defaults in `dashboard/config/settings.py` are for local development only:
 
 - Icons: Lucide (ISC licence)
 - Fonts: Inter and JetBrains Mono (SIL Open Font License, copies in `static/attendance/fonts/`)
-- Face models: YuNet and SFace from OpenCV Zoo
+- Face models: YuNet and SFace from OpenCV Zoo, run by the embedding service

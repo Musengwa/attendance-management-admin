@@ -1,21 +1,25 @@
 import csv
+import hmac
 import json
+import uuid
+from datetime import datetime
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from .forms import MemberForm, SessionForm, SettingsForm
 from .models import AppSettings, AttendanceRecord, Member, Notification, Session
-from .services import analytics, chain, detection, face, notify
+from .services import analytics, chain, detection, face, gallery, notify, rules
 
 
 # ---------------------------------------------------------------- dashboard
@@ -146,12 +150,12 @@ def member_scan_api(request, pk):
     member = get_object_or_404(Member, pk=pk)
     try:
         frames = json.loads(request.body).get("frames", [])
-        embeddings = face.embeddings_from_data_urls(frames)
+        model, embeddings = face.embeddings_from_data_urls(frames)
     except (ValueError, face.FaceError) as e:
         return JsonResponse({"error": str(e)}, status=400)
-    member.embeddings = embeddings
+    member.embeddings, member.embedding_model = embeddings, model
     member.face_registered_at = timezone.now()
-    member.save(update_fields=["embeddings", "face_registered_at"])
+    member.save(update_fields=["embeddings", "embedding_model", "face_registered_at"])
     return JsonResponse({"ok": True, "samples": len(embeddings)})
 
 
@@ -225,7 +229,8 @@ def notifications_poll(request):
 def settings_page(request):
     form = SettingsForm(request.POST or None, instance=AppSettings.load())
     if request.method == "POST" and form.is_valid():
-        form.save()
+        # save only the form's fields, so a stale gallery_version is never written back
+        form.save(commit=False).save(update_fields=list(form.cleaned_data))
         messages.success(request, "Settings saved.")
         return redirect("settings")
     days = int(request.GET.get("days", 30)) if request.GET.get("days", "30").isdigit() else 30
@@ -241,50 +246,111 @@ def chain_view(request):
     return render(request, "attendance/chain.html", {"online": chain.chain_status(), "records": on_chain})
 
 
-# ---------------------------------------------- API for the camera script
+# ------------------------------------- API for the matcher service (API_CONTRACT.md section 2)
 def _token_ok(request):
-    return request.headers.get("Authorization") == f"Token {settings.API_TOKEN}"
+    return hmac.compare_digest(request.headers.get("Authorization", ""), f"Token {settings.API_TOKEN}")
+
+
+def _unauthorised():
+    return JsonResponse({"error": "unauthorised"}, status=401)
+
+
+@require_GET
+def api_sessions_active(request):
+    """Sessions running now, plus gallery_version so the matcher knows when to re-download faces."""
+    if not _token_ok(request):
+        return _unauthorised()
+    now = timezone.now()
+    today = timezone.localdate(now)
+    sessions = []
+    for s in rules.running_sessions(now):  # same rule the dashboard uses, early window included
+        start, end = rules.window(s, today)
+        sessions.append({"id": s.id, "name": s.name, "starts_at": start.isoformat(), "ends_at": end.isoformat()})
+    return JsonResponse({"gallery_version": gallery.current(), "sessions": sessions})
+
+
+@require_GET
+def api_embeddings(request):
+    """?session=7,9 -> those sessions' members plus every banned member.  ?scope=all -> everyone with a face."""
+    if not _token_ok(request):
+        return _unauthorised()
+    version = gallery.current()  # read first: a change mid-request just triggers one more refresh
+    qs = Member.objects.exclude(embeddings=[]).filter(embedding_model=settings.FACE_MODEL)
+    if request.GET.get("scope") == "all":
+        pass
+    elif request.GET.get("session"):
+        try:
+            ids = [int(x) for x in request.GET["session"].split(",") if x.strip()]
+        except ValueError:
+            return JsonResponse({"error": "session must be comma-separated ids"}, status=400)
+        qs = qs.filter(Q(session_id__in=ids) | Q(status=Member.BANNED))  # banned are always included
+    else:
+        return JsonResponse({"error": "pass ?session=<ids> or ?scope=all"}, status=400)
+    members = [{"member_id": m.member_id, "banned": m.status == Member.BANNED, "embeddings": m.embeddings}
+               for m in qs.only("member_id", "status", "embeddings")]  # no names or emails leave Django
+    return JsonResponse({"model": settings.FACE_MODEL, "gallery_version": version, "members": members})
 
 
 @csrf_exempt
 @require_POST
 def api_record_attendance(request):
-    """Body: {"member_id": "...", "confidence": 0.71, "tx_hash": "0x..", "block_number": 12}; member_id null = unknown."""
+    """One event per face the matcher saw. Django decides present, late, banned or imposter."""
     if not _token_ok(request):
-        return JsonResponse({"error": "unauthorised"}, status=401)
+        return _unauthorised()
     try:
         data = json.loads(request.body or "{}")
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "invalid json"}, status=400)
-    result = detection.process_detection(data.get("member_id"), data.get("confidence"),
-                                         data.get("tx_hash", ""), data.get("block_number"))
-    return JsonResponse(result, status=201 if result["result"] in ("recorded", "imposter", "banned") else 200)
+        captured = datetime.fromisoformat(data["captured_at"])
+        confidence = float(data["confidence"])
+        camera_id = str(data["camera_id"])[:50]
+        event_id = uuid.UUID(str(data["event_id"])) if data.get("event_id") else None
+        member_id = None if data.get("member_id") is None else str(data["member_id"])
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return JsonResponse({"error": "invalid payload"}, status=400)  # the matcher keeps it as dead, not lost
+    if captured.tzinfo is None:
+        return JsonResponse({"error": "captured_at needs a UTC offset"}, status=400)
+
+    if event_id and AttendanceRecord.objects.filter(event_id=event_id).exists():
+        return JsonResponse({"status": "already_seen"})  # a retry of an event we already stored
+    try:
+        with transaction.atomic():
+            # judged at capture time, so events queued during an outage keep the right late/in-session result
+            result = detection.process_detection(member_id, confidence, data.get("tx_hash") or "",
+                                                 data.get("block_number"), now=captured,
+                                                 event_id=event_id, camera_id=camera_id)
+    except IntegrityError:  # two retries of the same event raced
+        return JsonResponse({"status": "already_seen"})
+
+    body = {"status": result["result"]}  # the matcher's blockchain hook looks for status == "recorded"
+    if "id" in result:
+        body["record"] = {"id": result["id"], "member_id": member_id, "session_id": result.get("session_id"),
+                          "camera_id": camera_id, "captured_at": data["captured_at"]}
+    if result["result"] == "recorded":
+        body["outside_session"] = not result["in_session"]
+    return JsonResponse(body, status=201 if result["result"] in ("recorded", "imposter", "banned") else 200)
 
 
 @csrf_exempt
 def api_member_face(request, member_id):
-    """GET: does the member exist?   POST {"embeddings": [[...128 floats], ...]}: save the face."""
+    """GET: does the member exist?   POST {"model": ..., "embeddings": [[...128 floats], ...]}: save the face.
+    Command-line fallback for registration; the model string must match so incompatible vectors can't get in."""
     if not _token_ok(request):
-        return JsonResponse({"error": "unauthorised"}, status=401)
+        return _unauthorised()
     member = Member.objects.filter(member_id=member_id).first()
     if not member:
         return JsonResponse({"error": "member not found"}, status=404)
     if request.method == "POST":
         try:
-            emb = json.loads(request.body).get("embeddings", [])
-        except ValueError:
-            emb = []
-        if not emb or any(len(v) != 128 for v in emb):
+            body = json.loads(request.body or "{}")
+            model, emb = body.get("model"), body.get("embeddings", [])
+            valid = bool(emb) and all(len(v) == 128 for v in emb)
+        except (ValueError, TypeError, AttributeError):
+            model, valid = None, False
+        if model != settings.FACE_MODEL:
+            return JsonResponse({"error": f"model must be {settings.FACE_MODEL}"}, status=400)
+        if not valid:
             return JsonResponse({"error": "embeddings must be a list of 128-float vectors"}, status=400)
-        member.embeddings, member.face_registered_at = emb, timezone.now()
-        member.save(update_fields=["embeddings", "face_registered_at"])
+        member.embeddings, member.embedding_model = emb, settings.FACE_MODEL
+        member.face_registered_at = timezone.now()
+        member.save(update_fields=["embeddings", "embedding_model", "face_registered_at"])
     return JsonResponse({"member_id": member.member_id, "full_name": member.full_name,
                          "face_registered": member.face_registered})
-
-
-def api_embeddings(request):
-    """The camera script downloads every registered face (banned members included, so they can be flagged)."""
-    if not _token_ok(request):
-        return JsonResponse({"error": "unauthorised"}, status=401)
-    data = {m.member_id: m.embeddings for m in Member.objects.exclude(embeddings=[])}
-    return JsonResponse(data)

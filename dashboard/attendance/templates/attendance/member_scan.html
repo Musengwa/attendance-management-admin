@@ -6,13 +6,13 @@
 <video id="v" class="video" autoplay playsinline muted></video>
 <p id="msg">Allow camera access, face the camera alone, then press Start. Slowly turn your head left and right while it captures.</p>
 <button id="go">{% icon "scan-face" %}Start scan</button>
-<p style="margin:12px 0 0"><small>Only a numeric face signature is stored, never photos. No browser camera? Use <code>python register.py {{ member.member_id }}</code> in the recognition folder.</small></p>
+<p style="margin:12px 0 0"><small>Only a numeric face signature is stored, never photos. If the scan keeps failing, ask an admin to check that the face service is running.</small></p>
 </div>
 <canvas id="c" style="display:none"></canvas>
 <script>
 const v = document.getElementById('v'), msg = document.getElementById('msg'), go = document.getElementById('go');
 navigator.mediaDevices.getUserMedia({video:{width:640,height:480}}).then(s => v.srcObject = s)
-  .catch(() => msg.textContent = 'Camera not available. Use register.py instead.');
+  .catch(() => msg.textContent = 'Camera not available. Open this page on the dashboard computer itself (http://localhost) or over HTTPS.');
 go.onclick = async () => {
   go.disabled = true; const frames = [], c = document.getElementById('c');
   c.width = v.videoWidth || 640; c.height = v.videoHeight || 480;
