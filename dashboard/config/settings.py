@@ -17,14 +17,34 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_env(path):
+    """Read KEY=VALUE lines from dashboard/.env. Real environment variables win."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip().removeprefix("export ").strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_env(BASE_DIR / ".env")
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-&!m1-l-hy=-n5+e)&wra1=@k%hy^+(dl*ccfjr7t=!c*^#o60c'
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY", 'django-insecure-&!m1-l-hy=-n5+e)&wra1=@k%hy^+(dl*ccfjr7t=!c*^#o60c'
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() in ("1", "true", "yes")
 
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 
@@ -145,8 +165,14 @@ EMBED_API_TOKEN = os.environ.get("EMBED_API_TOKEN", "")
 FACE_MODEL = "yunet2023mar+sface2021dec"  # must match the embedding service exactly
 FACE_MIN_SAMPLES = 5
 
-# Blockchain (Ganache) - used by attendance/services/chain.py
-GANACHE_URL = os.environ.get("GANACHE_URL", "http://127.0.0.1:7545")
+# Blockchain - used by attendance/services/chain.py
+# CHAIN_RPC_URL is the node's JSON-RPC address (Ganache, Hardhat, or a dev tunnel to one).
+# GANACHE_URL is still read so older .env files keep working.
+CHAIN_RPC_URL = os.environ.get("CHAIN_RPC_URL") or os.environ.get("GANACHE_URL", "http://127.0.0.1:7545")
+# Access token for a *private* Microsoft dev tunnel (`devtunnel token <id> --scopes connect`).
+# Leave empty when the tunnel port is public or the node is local.
+CHAIN_TUNNEL_TOKEN = os.environ.get("CHAIN_TUNNEL_TOKEN", "")
+CHAIN_TIMEOUT = float(os.environ.get("CHAIN_TIMEOUT", "5"))
 CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
 CONTRACT_ABI_PATH = os.environ.get("CONTRACT_ABI_PATH", str(BASE_DIR.parent / "blockchain" / "Attendance.abi.json"))
 

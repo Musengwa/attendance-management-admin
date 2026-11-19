@@ -11,7 +11,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from .models import AppSettings, AttendanceRecord as R, Member, Notification, Session
-from .services import analytics, detection, face, gallery, notify
+from .services import analytics, chain, detection, face, gallery, notify
 
 # Monday 2 Nov 2026, local time
 def at(h, m=0, day=2):
@@ -301,6 +301,8 @@ class FaceServiceTests(TestCase):
                 face.embeddings_from_data_urls(["x"])
 
 
+# Keep tests off the network: port 9 on localhost refuses immediately.
+@override_settings(CHAIN_RPC_URL="http://127.0.0.1:9", CHAIN_TUNNEL_TOKEN="", CONTRACT_ADDRESS="")
 class ViewTests(Base):
     def setUp(self):
         super().setUp()
@@ -374,3 +376,23 @@ class ViewTests(Base):
         notify.notify("IMPOSTER", "new")
         second = self.client.get(f"/notifications/poll/?after={first['latest']}").json()
         self.assertEqual([i["message"] for i in second["items"]], ["new"])
+
+
+@override_settings(CHAIN_RPC_URL="http://127.0.0.1:9", CHAIN_TUNNEL_TOKEN="", CONTRACT_ADDRESS="")
+class ChainTests(TestCase):
+    def test_unreachable_node_is_offline_not_an_error(self):
+        info = chain.node_info()
+        self.assertFalse(info["online"])
+        self.assertTrue(info["error"])
+        self.assertEqual(chain.read_chain_records(), [])
+
+    def test_private_tunnel_401_gets_a_clear_message(self):
+        w3 = mock.MagicMock()
+        type(w3.eth).chain_id = mock.PropertyMock(side_effect=Exception("401 Client Error: Unauthorized"))
+        with mock.patch.object(chain, "_web3", return_value=w3):
+            self.assertIn("CHAIN_TUNNEL_TOKEN", chain.node_info()["error"])
+
+    @override_settings(CHAIN_TUNNEL_TOKEN="tok")
+    def test_tunnel_token_is_sent_as_header(self):
+        provider = chain._web3().provider
+        self.assertEqual(provider.get_request_kwargs()["headers"]["X-Tunnel-Authorization"], "tunnel tok")

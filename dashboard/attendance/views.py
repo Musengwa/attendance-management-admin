@@ -243,7 +243,11 @@ def chain_view(request):
     db_hashes = set(AttendanceRecord.objects.exclude(tx_hash="").values_list("tx_hash", flat=True))
     for r in on_chain:
         r["in_db"] = r["tx_hash"] in db_hashes
-    return render(request, "attendance/chain.html", {"online": chain.chain_status(), "records": on_chain})
+    node = chain.node_info()
+    return render(request, "attendance/chain.html", {
+        "online": node["online"], "node": node, "contract_ready": chain.contract_ready() if node["online"] else False,
+        "contract_address": settings.CONTRACT_ADDRESS, "records": on_chain,
+    })
 
 
 # ------------------------------------- API for the matcher service (API_CONTRACT.md section 2)
