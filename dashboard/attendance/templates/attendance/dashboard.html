@@ -1,7 +1,7 @@
 {% extends "attendance/base.html" %}
 {% load ui %}
 {% block content %}
-<span id="chain-pill" class="pill boxed {% if chain_online %}on{% endif %}"><i></i><span>Ganache {% if chain_online %}online{% else %}offline{% endif %}</span></span>
+<span id="chain-pill" class="pill boxed {% if chain_online %}on{% endif %}"><i></i><span>Chain {% if chain_online %}online{% else %}offline{% endif %}</span></span>
 <div class="head"><h1>Today's overview</h1></div>
 
 <div class="split">
@@ -66,7 +66,7 @@
     swap($('alert-list'), d.alerts_html);
     setActivity(d.rows_html);
     $('chain-pill').classList.toggle('on', d.chain_online);
-    $('chain-pill').lastElementChild.textContent = 'Ganache ' + (d.chain_online ? 'online' : 'offline');
+    $('chain-pill').lastElementChild.textContent = 'Chain ' + (d.chain_online ? 'online' : 'offline');
   }
 
   async function refresh(){
