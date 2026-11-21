@@ -58,6 +58,28 @@ form.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .stack-form .helptext{display:block;color:var(--mute);font-size:12.5px;margin-top:4px}
 .errorlist{list-style:none;margin:0 0 6px;padding:0;color:var(--red);font-size:13px}
 .row{display:flex;gap:6px;align-items:center}.row input{width:130px}
+
+/* session timetable lines */
+.slot-form .narrow{max-width:640px}
+.slot-form>button{margin-top:4px}
+.slot{border:1px solid var(--line);background:var(--raised);border-radius:10px;padding:12px;margin-bottom:10px;display:grid;gap:10px}
+.slot.removed{opacity:.45}
+.slot.removed .slot-when,.slot.removed .slot-times label:not(.slot-del){pointer-events:none}
+.slot [hidden]{display:none!important}
+.slot-when,.slot-times{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.stack-form .slot select,.stack-form .slot input:not([type=checkbox]){width:auto}
+.stack-form .slot label{display:inline-flex;gap:6px;align-items:center;margin:0;color:var(--text);font-size:13.5px}
+.slot-days{display:flex;flex-wrap:wrap;gap:4px}
+.stack-form .slot label.day{position:relative;cursor:pointer}
+.slot label.day input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.slot label.day span{display:inline-block;min-width:44px;text-align:center;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--mute);font-weight:500;transition:background .15s,color .15s,border-color .15s}
+.slot label.day input:checked+span{background:var(--acc);color:var(--on-acc);border-color:transparent}
+.slot label.day input:focus-visible+span{outline:2px solid var(--blue);outline-offset:1px}
+.stack-form .slot label.slot-del{margin-left:auto;color:var(--mute);cursor:pointer}
+.slot .errorlist{margin:0}
+.sched{display:flex;flex-wrap:wrap;gap:4px}
+.sched .tag{background:var(--raised);color:var(--text);border:1px solid var(--line)}
+.sched .tag.once{border-color:var(--blue);color:var(--blue)}
 .text-link{display:inline-flex;gap:4px;align-items:center;font-size:13px}
 
 /* tables */

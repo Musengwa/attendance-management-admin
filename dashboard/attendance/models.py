@@ -23,18 +23,43 @@ class AppSettings(models.Model):
 
 
 class Session(models.Model):
-    """A weekly class/session. Start and end times can be edited at any time."""
+    """A class/session. When it meets is the list of SessionSlots in `slots`; each can be edited at any time."""
     name = models.CharField(max_length=120)
-    weekday = models.PositiveSmallIntegerField(choices=WEEKDAYS)
-    start_time = models.TimeField()
-    end_time = models.TimeField()
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["weekday", "start_time"]
+        ordering = ["name"]
+
+    def schedule_summary(self):
+        return " · ".join(str(s) for s in self.slots.all()) or "No times set"
 
     def __str__(self):
-        return f"{self.name} ({self.get_weekday_display()} {self.start_time:%H:%M}-{self.end_time:%H:%M})"
+        return self.name
+
+
+class SessionSlot(models.Model):
+    """One line of a session's timetable: either every <days> at start-end, or once on <date> at start-end.
+    Two times on the same day are two slots (e.g. Wed 08:00 and Wed 10:00)."""
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="slots")
+    days = models.JSONField(default=list, blank=True, help_text="Weekdays 0=Mon..6=Sun; empty for a one-off slot")
+    date = models.DateField(null=True, blank=True, help_text="Set for a one-off slot only")
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    class Meta:
+        ordering = ["date", "start_time", "id"]
+
+    @property
+    def is_weekly(self):
+        return self.date is None
+
+    def happens_on(self, d):
+        return d == self.date if self.date else d.weekday() in self.days
+
+    def __str__(self):
+        when = (self.date.strftime("%a %d %b %Y") if self.date
+                else ", ".join(dict(WEEKDAYS)[d][:3] for d in sorted(self.days)))
+        return f"{when} {self.start_time:%H:%M}-{self.end_time:%H:%M}"
 
 
 class Member(models.Model):
@@ -74,6 +99,8 @@ class AttendanceRecord(models.Model):
     session = models.ForeignKey(Session, null=True, blank=True, on_delete=models.SET_NULL, related_name="records")
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PRESENT)
     in_session = models.BooleanField(default=False, help_text="Detected while their own session was running")
+    occurrence_start = models.DateTimeField(null=True, blank=True,
+                                            help_text="Start of the session meeting this was counted for")
     minutes_late = models.PositiveIntegerField(default=0)
     is_late = models.BooleanField(default=False)
     confidence = models.FloatField(null=True, blank=True, help_text="Cosine similarity (higher = better match)")

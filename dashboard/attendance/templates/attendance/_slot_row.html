@@ -1,0 +1,15 @@
+<div class="slot">
+  {{ f.id }}
+  {% for e in f.non_field_errors %}<ul class="errorlist"><li>{{ e }}</li></ul>{% endfor %}
+  <div class="slot-when">
+    {{ f.kind }}
+    <div class="slot-days">{% for c in f.days %}<label class="day">{{ c.tag }}<span>{{ c.choice_label }}</span></label>{% endfor %}</div>
+    <div class="slot-date">{{ f.date }}</div>
+  </div>
+  {{ f.days.errors }}{{ f.date.errors }}
+  <div class="slot-times">
+    <label>From {{ f.start_time }}</label><label>to {{ f.end_time }}</label>
+    {% if f.DELETE %}<label class="slot-del">{{ f.DELETE }}<span>Remove</span></label>{% endif %}
+  </div>
+  {{ f.start_time.errors }}{{ f.end_time.errors }}
+</div>

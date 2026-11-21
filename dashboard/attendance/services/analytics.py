@@ -18,17 +18,17 @@ def compute(days=30, now=None):
     start = today - timedelta(days=days - 1)
     start_dt = rules.make_dt(start, time.min)
 
-    # first on-time/late present record for each (member, date)
+    # first on-time/late present record for each (member, session meeting)
     pairs = {}
     for r in R.objects.filter(status=R.PRESENT, in_session=True, timestamp__gte=start_dt).order_by("timestamp"):
-        pairs.setdefault((r.member_id, timezone.localdate(r.timestamp)), r.is_late)
+        pairs.setdefault((r.member_id, r.occurrence_start), r.is_late)
 
     per, exp, pres, late = {}, 0, 0, 0
-    members = Member.objects.filter(status=Member.ACTIVE, session__isnull=False,
-                                    session__is_active=True).select_related("session")
+    members = Member.objects.filter(status=Member.ACTIVE, session__isnull=False, session__is_active=True
+                                    ).select_related("session").prefetch_related("session__slots")
     for m in members:
         first = max(start, timezone.localdate(m.registered_at))
-        for d in rules.occurrences(m.session, first, today, now):
+        for d in rules.occurrences(m.session, first, today, now):  # d = start datetime of one meeting
             row = per.setdefault(m.session_id, {"name": m.session.name, "expected": 0, "present": 0, "late": 0})
             row["expected"] += 1
             exp += 1

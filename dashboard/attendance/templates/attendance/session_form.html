@@ -1,0 +1,46 @@
+{% extends "attendance/base.html" %}
+{% load ui %}
+{% block content %}
+{% comment %}One block per slot. Two times on the same day = two slots, e.g. "Wed 08:00-09:30" and "Wed 10:00-11:30".{% endcomment %}
+<div class="head"><h1>{{ title }}</h1></div>
+<form class="stack-form slot-form" method="post">{% csrf_token %}
+<div class="card narrow mb">{{ form.as_p }}</div>
+
+<div class="card narrow mb">
+  <h2>When it meets</h2>
+  <p class="helptext">Add one line per time. For 08:00 and 10:00 every Wednesday, add two lines. Tick several days to repeat the same time on each of them, or pick <b>Once, on</b> for a one-off date.</p>
+  {{ slots.management_form }}
+  {% for e in slots.non_form_errors %}<ul class="errorlist"><li>{{ e }}</li></ul>{% endfor %}
+  <div id="slots">
+  {% for f in slots %}{% include "attendance/_slot_row.html" %}{% endfor %}
+  </div>
+  <button type="button" class="ghost sm" id="add-slot">{% icon "plus" %}Add another time</button>
+</div>
+<button>Save</button>
+</form>
+
+<template id="slot-tpl">{% with f=slots.empty_form %}{% include "attendance/_slot_row.html" %}{% endwith %}</template>
+
+<script>
+(function(){
+  const box = document.getElementById('slots');
+  const total = document.getElementById('id_{{ slots.prefix }}-TOTAL_FORMS');
+  function sync(row){
+    const once = row.querySelector('select[name$="-kind"]').value === 'once';
+    row.querySelector('.slot-days').hidden = once;
+    row.querySelector('.slot-date').hidden = !once;
+    const del = row.querySelector('input[name$="-DELETE"]');
+    row.classList.toggle('removed', !!(del && del.checked));
+  }
+  box.addEventListener('change', e => { const row = e.target.closest('.slot'); if (row) sync(row); });
+  box.querySelectorAll('.slot').forEach(sync);
+  document.getElementById('add-slot').addEventListener('click', () => {
+    const i = +total.value;
+    const html = document.getElementById('slot-tpl').innerHTML.replace(/__prefix__/g, i);
+    box.insertAdjacentHTML('beforeend', html);
+    total.value = i + 1;
+    sync(box.lastElementChild);
+  });
+})();
+</script>
+{% endblock %}
