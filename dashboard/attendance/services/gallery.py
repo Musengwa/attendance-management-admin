@@ -6,7 +6,7 @@ QuerySet.update() and bulk_create() skip signals: call bump() yourself after any
 from django.db.models import F
 from django.db.models.signals import post_delete, post_save
 
-from ..models import AppSettings, Member, Session
+from ..models import AppSettings, Member, Session, SessionSlot
 
 
 def current():
@@ -19,6 +19,6 @@ def bump(**_):
 
 
 def connect():
-    for model in (Member, Session):
+    for model in (Member, Session, SessionSlot):
         post_save.connect(bump, sender=model, dispatch_uid=f"gallery-{model.__name__}-save")
         post_delete.connect(bump, sender=model, dispatch_uid=f"gallery-{model.__name__}-delete")

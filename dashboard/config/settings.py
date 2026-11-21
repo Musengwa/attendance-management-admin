@@ -175,4 +175,6 @@ CHAIN_TUNNEL_TOKEN = os.environ.get("CHAIN_TUNNEL_TOKEN", "")
 CHAIN_TIMEOUT = float(os.environ.get("CHAIN_TIMEOUT", "5"))
 CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
 CONTRACT_ABI_PATH = os.environ.get("CONTRACT_ABI_PATH", str(BASE_DIR.parent / "blockchain" / "Attendance.abi.json"))
+# Relative paths in .env are relative to the dashboard folder, not wherever the server was started
+CONTRACT_ABI_PATH = str((BASE_DIR / CONTRACT_ABI_PATH).resolve())
 

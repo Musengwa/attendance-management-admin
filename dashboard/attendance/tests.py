@@ -21,7 +21,8 @@ def at(h, m=0, day=2):
 class Base(TestCase):
     def setUp(self):
         cache.clear()
-        self.session = Session.objects.create(name="Maths", weekday=0, start_time=time(9), end_time=time(11))
+        self.session = Session.objects.create(name="Maths")
+        self.slot = self.session.slots.create(days=[0], start_time=time(9), end_time=time(11))  # Mondays
         self.m = Member.objects.create(member_id="1", full_name="Ann", session=self.session,
                                        registered_at=at(8, day=2) - timedelta(days=30), embeddings=[[0.1] * 128],
                                        embedding_model=settings.FACE_MODEL)
@@ -56,9 +57,40 @@ class RuleTests(Base):
         detection.process_detection("1", now=at(9, 5))
         self.assertEqual(detection.process_detection("1", now=at(9, 40))["result"], "already_marked")
 
-    def test_edited_session_time_is_respected(self):
-        self.session.start_time, self.session.end_time = time(13), time(15)
+    def test_two_times_on_the_same_day_are_marked_separately(self):
+        self.session.slots.create(days=[0], start_time=time(13), end_time=time(15))
+        self.assertEqual(detection.process_detection("1", now=at(9, 5))["result"], "recorded")
+        self.assertEqual(detection.process_detection("1", now=at(13, 20))["result"], "recorded")
+        self.assertEqual(detection.process_detection("1", now=at(13, 40))["result"], "already_marked")
+        late = R.objects.get(timestamp=at(13, 20))
+        self.assertEqual((late.minutes_late, late.occurrence_start), (20, at(13)))
+
+    def test_one_slot_on_several_days(self):
+        self.slot.days = [0, 2]  # Monday and Wednesday
+        self.slot.save()
+        detection.process_detection("1", now=at(9, 30, day=4))  # Wednesday
+        self.assertTrue(R.objects.get().in_session)
+
+    def test_one_off_date(self):
+        self.session.slots.create(date=at(0, day=3).date(), start_time=time(14), end_time=time(16))  # Tue 3 Nov
+        detection.process_detection("1", now=at(14, 30, day=3))
+        detection.process_detection("1", now=at(14, 30, day=10))  # the next Tuesday: no session
+        self.assertEqual([r.in_session for r in R.objects.order_by("timestamp")], [True, False])
+
+    def test_overlapping_slots_use_the_latest_start(self):
+        self.session.slots.create(days=[0], start_time=time(10), end_time=time(12))
+        detection.process_detection("1", now=at(10, 5))
+        self.assertEqual((R.objects.get().occurrence_start, R.objects.get().is_late), (at(10), False))
+
+    def test_inactive_session_never_runs(self):
+        self.session.is_active = False
         self.session.save()
+        detection.process_detection("1", now=at(9, 30))
+        self.assertFalse(R.objects.get().in_session)
+
+    def test_edited_session_time_is_respected(self):
+        self.slot.start_time, self.slot.end_time = time(13), time(15)
+        self.slot.save()
         detection.process_detection("1", now=at(9, 30))
         self.assertFalse(R.objects.get().in_session)
 
@@ -112,6 +144,12 @@ class NotificationTests(Base):
 
 
 class AnalyticsTests(Base):
+    def test_each_meeting_counts_separately(self):
+        self.session.slots.create(days=[0], start_time=time(13), end_time=time(14))
+        detection.process_detection("1", now=at(9, 5))  # came to the morning one only
+        a = analytics.compute(days=1, now=at(15))
+        self.assertEqual((a["expected"], a["present"]), (2, 1))
+
     def test_rates(self):
         Member.objects.create(member_id="2", full_name="Bob", session=self.session, registered_at=at(8) - timedelta(days=30))
         detection.process_detection("1", now=at(9, 30))   # Ann late, present
@@ -204,6 +242,10 @@ class ApiTests(Base):
         self.assertIsInstance(d["gallery_version"], str)
         with mock.patch("django.utils.timezone.now", return_value=at(14)):
             self.assertEqual(self.get("/api/sessions/active/").json()["sessions"], [])
+        self.session.slots.create(days=[0], start_time=time(14), end_time=time(15))
+        with mock.patch("django.utils.timezone.now", return_value=at(14, 10)):
+            d = self.get("/api/sessions/active/").json()
+        self.assertEqual(d["sessions"][0]["starts_at"], at(14).isoformat())
 
     def test_gallery_version_changes_on_member_session_and_ban_changes(self):
         v = gallery.current()
@@ -211,8 +253,11 @@ class ApiTests(Base):
         self.m.save()
         self.assertNotEqual(gallery.current(), v)
         v = gallery.current()
-        self.session.end_time = time(12)
-        self.session.save()
+        self.slot.end_time = time(12)
+        self.slot.save()
+        self.assertNotEqual(gallery.current(), v)
+        v = gallery.current()
+        self.session.slots.create(days=[3], start_time=time(9), end_time=time(10))
         self.assertNotEqual(gallery.current(), v)
 
     def test_settings_page_does_not_reset_gallery_version(self):
@@ -227,7 +272,8 @@ class ApiTests(Base):
         self.assertEqual(gallery.current(), v)
 
     def test_embeddings_filters(self):
-        other = Session.objects.create(name="Art", weekday=1, start_time=time(9), end_time=time(10))
+        other = Session.objects.create(name="Art")
+        other.slots.create(days=[1], start_time=time(9), end_time=time(10))
         Member.objects.create(member_id="2", full_name="Bo", session=other, embeddings=[[0.2] * 128],
                               embedding_model=settings.FACE_MODEL)
         Member.objects.create(member_id="3", full_name="Cy", status=Member.BANNED, embeddings=[[0.3] * 128],
@@ -343,10 +389,56 @@ class ViewTests(Base):
         self.assertEqual(r.status_code, 302)
         self.assertIn("/scan/", r["Location"])
 
+    def session_post(self, slots, name="X", url="/sessions/add/", initial=0):
+        data = {"name": name, "is_active": "on", "slots-TOTAL_FORMS": len(slots), "slots-INITIAL_FORMS": initial,
+                "slots-MIN_NUM_FORMS": 1, "slots-MAX_NUM_FORMS": 1000}
+        for i, row in enumerate(slots):
+            data.update({f"slots-{i}-{k}": v for k, v in row.items()})
+        return self.client.post(url, data)
+
     def test_session_validation(self):
-        r = self.client.post("/sessions/add/", {"name": "X", "weekday": 1, "start_time": "10:00", "end_time": "09:00"})
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(Session.objects.filter(name="X").count(), 0)
+        bad = [
+            [{"kind": "weekly", "days": [1], "start_time": "10:00", "end_time": "09:00"}],  # ends before start
+            [{"kind": "weekly", "start_time": "10:00", "end_time": "11:00"}],  # no day ticked
+            [{"kind": "once", "start_time": "10:00", "end_time": "11:00"}],  # no date
+            [],  # no times at all
+        ]
+        for slots in bad:
+            r = self.session_post(slots)
+            self.assertEqual(r.status_code, 200, slots)
+            self.assertFalse(Session.objects.filter(name="X").exists(), slots)
+
+    def test_create_session_with_several_days_times_and_a_one_off(self):
+        r = self.session_post([
+            {"kind": "weekly", "days": [2], "start_time": "08:00", "end_time": "09:30"},
+            {"kind": "weekly", "days": [2], "start_time": "10:00", "end_time": "11:30"},
+            {"kind": "weekly", "days": [4, 6], "start_time": "09:00", "end_time": "10:00"},
+            {"kind": "weekly", "days": [4, 6], "start_time": "11:00", "end_time": "12:00"},
+            {"kind": "once", "date": "2026-11-30", "days": [3], "start_time": "14:00", "end_time": "16:00"},
+        ])
+        self.assertEqual(r.status_code, 302)
+        s = Session.objects.get(name="X")
+        self.assertEqual([(x.days, x.date, x.start_time) for x in s.slots.order_by("id")], [
+            ([2], None, time(8)), ([2], None, time(10)), ([4, 6], None, time(9)), ([4, 6], None, time(11)),
+            ([], datetime(2026, 11, 30).date(), time(14))])  # a one-off ignores any ticked days
+        self.assertIn("Fri, Sun 09:00-10:00", s.schedule_summary())
+        self.assertEqual(self.client.get("/sessions/").status_code, 200)
+
+    def test_edit_session_adds_and_removes_slots(self):
+        r = self.session_post([
+            {"id": self.slot.pk, "kind": "weekly", "days": [0], "start_time": "09:00", "end_time": "11:00",
+             "DELETE": "on"},
+            {"kind": "weekly", "days": [1, 3], "start_time": "13:00", "end_time": "14:00"},
+        ], name="Maths", url=f"/sessions/{self.session.pk}/edit/", initial=1)
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual([(x.days, x.start_time) for x in self.session.slots.all()], [([1, 3], time(13))])
+
+    def test_dashboard_expects_members_of_a_one_off_session_today(self):
+        self.slot.delete()
+        today = timezone.localdate()
+        self.session.slots.create(date=today, start_time=time(23, 58), end_time=time(23, 59))
+        metrics = {m["key"]: m["value"] for m in self.client.get("/dashboard/live/").json()["metrics"]}
+        self.assertEqual(metrics["absent"], 1)
 
     def test_scan_saves_embeddings(self):
         with mock.patch("attendance.services.face.embeddings_from_data_urls",

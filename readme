@@ -72,7 +72,7 @@ PowerShell, one window per service. Replace E and D with your real tokens.
 2. Django:
 
        cd "attendance admin\dashboard"
-       $env:ATTENDANCE_API_TOKEN="D"; $env:EMBED_URL="http://127.0.0.1:8000"; $env:EMBED_API_TOKEN="E"
+       $env:ATTENDANCE_API_TOKEN="D"; $env:EMBED_URL="https://face-recognition-embedder.onrender.com"; $env:EMBED_API_TOKEN="E"
        python manage.py runserver 0.0.0.0:8001
 
 3. Check Django's API:
@@ -143,7 +143,7 @@ to start one. Real environment variables override the file.
 | Variable | Default | Used for |
 |---|---|---|
 | `ATTENDANCE_API_TOKEN` | `dev-token-change-me` | Token the matcher must send. Equal to the matcher's `DJANGO_API_TOKEN`. |
-| `EMBED_URL` | `http://127.0.0.1:8000` | Where Django finds the embedding service |
+| `EMBED_URL` | `https://face-recognition-embedder.onrender.com` | Where Django finds the embedding service |
 | `EMBED_API_TOKEN` | empty | Token Django sends to the embedding service |
 | `ALLOWED_HOSTS` | `127.0.0.1,localhost` | Comma-separated. Add Django's LAN IP if the matcher runs on another machine. |
 | `DJANGO_SECRET_KEY` | insecure dev key | Django secret key |

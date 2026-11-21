@@ -12,10 +12,16 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         now = timezone.now()
         today = timezone.localdate(now)
-        s1, _ = Session.objects.get_or_create(name="Software Engineering", weekday=today.weekday(),
-                                              defaults={"start_time": time(0, 0), "end_time": time(23, 59)})
-        s2, _ = Session.objects.get_or_create(name="Databases", weekday=(today.weekday() + 2) % 7,
-                                              defaults={"start_time": time(10), "end_time": time(12)})
+        s1, new1 = Session.objects.get_or_create(name="Software Engineering")
+        if new1:  # all day today, so the dashboard has a running session
+            s1.slots.create(days=[today.weekday()], start_time=time(0, 0), end_time=time(23, 59))
+        s2, new2 = Session.objects.get_or_create(name="Databases")
+        if new2:  # twice on Wednesdays, mornings on Fridays and Sundays, plus one extra date
+            s2.slots.create(days=[2], start_time=time(8), end_time=time(9, 30))
+            s2.slots.create(days=[2], start_time=time(10), end_time=time(11, 30))
+            s2.slots.create(days=[4, 6], start_time=time(9), end_time=time(10, 30))
+            s2.slots.create(days=[4, 6], start_time=time(11), end_time=time(12, 30))
+            s2.slots.create(date=today + timedelta(days=9), start_time=time(14), end_time=time(16))
         old = now - timedelta(days=30)
         people = [("202400004", "Mubanga Muma", s1), ("202400005", "Chanda Mwila", s1), ("202400006", "Natasha Phiri", s2)]
         for mid, name, s in people:

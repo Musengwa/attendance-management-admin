@@ -17,7 +17,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .forms import MemberForm, SessionForm, SettingsForm
+from .forms import MemberForm, SessionForm, SessionSlotFormSet, SettingsForm
 from .models import AppSettings, AttendanceRecord, Member, Notification, Session
 from .services import analytics, chain, detection, face, gallery, notify, rules
 
@@ -28,7 +28,8 @@ def _dashboard_ctx():
     today = timezone.localdate(now)
     todays = AttendanceRecord.objects.filter(timestamp__date=today)
     present_ids = set(todays.filter(status="PRESENT", in_session=True).values_list("member_id", flat=True))
-    expected = Member.objects.filter(status=Member.ACTIVE, session__weekday=today.weekday(), session__is_active=True)
+    meets_today = [s.id for s in Session.objects.prefetch_related("slots") if rules.has_occurrence_on(s, today)]
+    expected = Member.objects.filter(status=Member.ACTIVE, session_id__in=meets_today)
     metrics = [
         {"key": "present", "label": "Present", "icon": "user-check", "tone": "good",
          "hint": "Seen in their own session", "value": len(present_ids)},
@@ -184,17 +185,21 @@ def member_unban(request, pk):
 @login_required
 def session_list(request):
     return render(request, "attendance/session_list.html",
-                  {"sessions": Session.objects.annotate(n=Count("members"))})
+                  {"sessions": Session.objects.annotate(n=Count("members")).prefetch_related("slots")})
 
 
 @login_required
 def session_edit(request, pk=None):
-    obj = get_object_or_404(Session, pk=pk) if pk else None
+    obj = get_object_or_404(Session, pk=pk) if pk else Session()
     form = SessionForm(request.POST or None, instance=obj)
-    if request.method == "POST" and form.is_valid():
-        form.save()
+    slots = SessionSlotFormSet(request.POST or None, instance=obj)
+    if request.method == "POST" and form.is_valid() and slots.is_valid():
+        with transaction.atomic():
+            slots.instance = form.save()
+            slots.save()
         return redirect("session_list")
-    return render(request, "attendance/form.html", {"form": form, "title": "Edit session" if obj else "New session"})
+    return render(request, "attendance/session_form.html",
+                  {"form": form, "slots": slots, "title": "Edit session" if pk else "New session"})
 
 
 # ------------------------------------------------------------ notifications
@@ -265,10 +270,8 @@ def api_sessions_active(request):
     if not _token_ok(request):
         return _unauthorised()
     now = timezone.now()
-    today = timezone.localdate(now)
     sessions = []
-    for s in rules.running_sessions(now):  # same rule the dashboard uses, early window included
-        start, end = rules.window(s, today)
+    for s, (start, end) in rules.running_sessions(now):  # same rule the dashboard uses, early window included
         sessions.append({"id": s.id, "name": s.name, "starts_at": start.isoformat(), "ends_at": end.isoformat()})
     return JsonResponse({"gallery_version": gallery.current(), "sessions": sessions})
 

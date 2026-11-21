@@ -1,8 +1,19 @@
 from django.contrib import admin
 
-from .models import AppSettings, AttendanceRecord, Member, Notification, Session
+from .models import AppSettings, AttendanceRecord, Member, Notification, Session, SessionSlot
 
-admin.site.register([AppSettings, Session, Notification])
+admin.site.register([AppSettings, Notification])
+
+
+class SessionSlotInline(admin.TabularInline):
+    model = SessionSlot
+    extra = 0
+
+
+@admin.register(Session)
+class SessionAdmin(admin.ModelAdmin):
+    list_display = ("name", "schedule_summary", "is_active")
+    inlines = [SessionSlotInline]
 
 
 @admin.register(Member)

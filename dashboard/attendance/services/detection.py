@@ -14,7 +14,8 @@ def process_detection(member_id, confidence=None, tx_hash="", block_number=None,
     now = now or timezone.now()
     base = dict(confidence=confidence, tx_hash=tx_hash or "", block_number=block_number, timestamp=now,
                 event_id=event_id, camera_id=camera_id)
-    member = Member.objects.filter(member_id=member_id).select_related("session").first() if member_id else None
+    member = (Member.objects.filter(member_id=member_id).select_related("session")
+              .prefetch_related("session__slots").first()) if member_id else None
 
     # 1. Unregistered face = imposter
     if member is None:
@@ -22,7 +23,7 @@ def process_detection(member_id, confidence=None, tx_hash="", block_number=None,
         rec = R.objects.create(status=R.UNKNOWN, in_session=bool(running), **base)
         if running:
             notify.notify(Notification.IMPOSTER,
-                          f"Unregistered person detected during {running[0].name}.", dedupe_minutes=2, now=now)
+                          f"Unregistered person detected during {running[0][0].name}.", dedupe_minutes=2, now=now)
         notify.check_imposter_spike(now)
         return {"result": "imposter", "id": rec.id}
 
@@ -38,16 +39,17 @@ def process_detection(member_id, confidence=None, tx_hash="", block_number=None,
                       member=member, dedupe_minutes=10, now=now)
         return {"result": "banned", "id": rec.id}
 
-    # 3. Normal attendance, one per session-day (or one per hour if outside their session)
+    # 3. Normal attendance, one per session meeting (or one per hour if outside their session)
     mine = R.objects.filter(member=member, status=R.PRESENT)
     if info["in_session"]:
-        if mine.filter(in_session=True, timestamp__date=timezone.localdate(now)).exists():
+        if mine.filter(in_session=True, occurrence_start=info["occurrence_start"]).exists():
             return {"result": "already_marked"}
     elif mine.filter(timestamp__range=(now - timedelta(hours=1), now + timedelta(hours=1))).exists():
         # both sides of `now`: replayed events can arrive after later ones
         return {"result": "already_seen"}
 
     rec = R.objects.create(member=member, status=R.PRESENT, session=info["session"], in_session=info["in_session"],
-                           minutes_late=info["minutes_late"], is_late=info["is_late"], **base)
+                           occurrence_start=info["occurrence_start"], minutes_late=info["minutes_late"],
+                           is_late=info["is_late"], **base)
     return {"result": "recorded", "id": rec.id, "in_session": rec.in_session, "late": rec.is_late,
             "session_id": rec.session_id if rec.in_session else None}
